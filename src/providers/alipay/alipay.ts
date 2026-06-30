@@ -6,6 +6,7 @@ import {
   QueryResult,
 } from '../../domain/types';
 import { ProviderError, SignatureError } from '../../domain/errors';
+import { RefundRequest, RefundResult, RefundStatus } from '../../domain/refund';
 import { HttpClient, PaymentProvider, RawCallback } from '../provider';
 import { fromMinorUnits, toMinorUnits } from '../../core/money';
 import { signParams, verifyParams } from './sign';
@@ -130,5 +131,31 @@ export class AlipayProvider implements PaymentProvider {
   callbackAck(success: boolean): { status: number; contentType: string; body: string } {
     // Alipay expects the literal string "success" to stop retrying.
     return { status: 200, contentType: 'text/plain', body: success ? 'success' : 'failure' };
+  }
+
+  async refund(order: Order, req: RefundRequest): Promise<RefundResult> {
+    const params = this.commonParams('alipay.trade.refund', {
+      out_trade_no: order.outTradeNo,
+      refund_amount: fromMinorUnits(req.amount, 'CNY'),
+      out_request_no: req.outRefundNo,
+      refund_reason: req.reason,
+    });
+    params['sign'] = signParams(params, this.cfg.privateKeyPem);
+    const res = await this.http.request({
+      method: 'POST',
+      url: this.cfg.gateway,
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8' },
+      body: new URLSearchParams(params).toString(),
+    });
+    if (res.status !== 200) throw new ProviderError(`alipay refund failed (${res.status})`);
+    const parsed = JSON.parse(res.body) as {
+      alipay_trade_refund_response?: { code: string; msg: string; trade_no?: string; fund_change?: string };
+    };
+    const r = parsed.alipay_trade_refund_response;
+    if (!r || r.code !== '10000') {
+      logger.error('alipay refund rejected', { resp: r });
+      throw new ProviderError(`alipay refund rejected: ${r?.msg ?? 'unknown'}`);
+    }
+    return { providerRefundId: r.trade_no, status: RefundStatus.SUCCESS, rawStatus: r.fund_change ?? 'Y' };
   }
 }

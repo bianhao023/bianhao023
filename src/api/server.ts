@@ -6,6 +6,7 @@ import { buildRouter } from './routes';
 export function createHttpServer(container: Container): Server {
   const router = buildRouter({
     payments: container.payments,
+    refunds: container.refunds,
     plans: container.plans,
     enabledMethods: container.enabledMethods,
     usdtWatcher: container.usdtWatcher,

@@ -8,17 +8,20 @@ import {
   InProcessLocker,
   MemoryOrderRepository,
   MemoryProcessedEventStore,
+  MemoryRefundRepository,
   MemorySubscriptionRepository,
 } from './storage/memoryStore';
 import {
   Locker,
   OrderRepository,
   ProcessedEventStore,
+  RefundRepository,
   SubscriptionRepository,
 } from './storage/repository';
 import { PlanCatalog } from './services/plans';
 import { SubscriptionService } from './services/subscriptionService';
 import { PaymentService } from './services/paymentService';
+import { RefundService } from './services/refundService';
 import { UsdtWatcher } from './services/usdtWatcher';
 
 /** Overrides used by tests to inject fakes / fixed clocks. */
@@ -26,6 +29,7 @@ export interface ContainerOverrides {
   httpClient?: HttpClient;
   chainClient?: TronChainClient;
   orders?: OrderRepository;
+  refunds?: RefundRepository;
   subscriptions?: SubscriptionRepository;
   processedEvents?: ProcessedEventStore;
   locker?: Locker;
@@ -39,6 +43,7 @@ export interface Container {
   config: AppConfig;
   orders: OrderRepository;
   payments: PaymentService;
+  refunds: RefundService;
   plans: PlanCatalog;
   usdtWatcher?: UsdtWatcher;
   enabledMethods: PaymentMethod[];
@@ -48,6 +53,7 @@ export interface Container {
 export function buildContainer(config: AppConfig, overrides: ContainerOverrides = {}): Container {
   const http = overrides.httpClient ?? new FetchHttpClient();
   const orders = overrides.orders ?? new MemoryOrderRepository();
+  const refundsRepo = overrides.refunds ?? new MemoryRefundRepository();
   const subscriptionsRepo = overrides.subscriptions ?? new MemorySubscriptionRepository();
   const processedEvents = overrides.processedEvents ?? new MemoryProcessedEventStore();
   const locker = overrides.locker ?? new InProcessLocker();
@@ -84,11 +90,13 @@ export function buildContainer(config: AppConfig, overrides: ContainerOverrides 
     now,
   });
 
+  const refunds = new RefundService({ providers, orders, refunds: refundsRepo, locker, now });
+
   if (providers.has('usdt')) {
     usdtWatcher = new UsdtWatcher(orders, payments);
   }
 
   const enabledMethods = [...providers.keys()];
 
-  return { config, orders, payments, plans, usdtWatcher, enabledMethods };
+  return { config, orders, payments, refunds, plans, usdtWatcher, enabledMethods };
 }

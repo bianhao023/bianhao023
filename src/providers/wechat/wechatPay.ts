@@ -6,6 +6,7 @@ import {
   QueryResult,
 } from '../../domain/types';
 import { ProviderError, SignatureError } from '../../domain/errors';
+import { RefundRequest, RefundResult, RefundStatus } from '../../domain/refund';
 import { HttpClient, PaymentProvider, RawCallback } from '../provider';
 import { aesGcmDecrypt } from '../../utils/crypto';
 import { buildAuthorizationHeader, verifyNotificationSignature } from './sign';
@@ -156,5 +157,43 @@ export class WechatPayProvider implements PaymentProvider {
   callbackAck(success: boolean): { status: number; contentType: string; body: string } {
     if (success) return { status: 200, contentType: 'application/json', body: '{"code":"SUCCESS","message":"OK"}' };
     return { status: 500, contentType: 'application/json', body: '{"code":"FAIL","message":"FAILED"}' };
+  }
+
+  async refund(order: Order, req: RefundRequest): Promise<RefundResult> {
+    const path = '/v3/refund/domestic/refunds';
+    const body = JSON.stringify({
+      out_trade_no: order.outTradeNo,
+      out_refund_no: req.outRefundNo,
+      reason: req.reason,
+      notify_url: this.cfg.notifyUrl,
+      amount: { refund: req.amount, total: req.totalAmount, currency: 'CNY' },
+    });
+    const auth = buildAuthorizationHeader({
+      method: 'POST',
+      urlPath: path,
+      body,
+      mchId: this.cfg.mchId,
+      serialNo: this.cfg.serialNo,
+      privateKeyPem: this.cfg.privateKeyPem,
+    });
+    const res = await this.http.request({
+      method: 'POST',
+      url: `${this.cfg.apiBase}${path}`,
+      headers: { Authorization: auth, Accept: 'application/json', 'Content-Type': 'application/json' },
+      body,
+    });
+    if (res.status !== 200) {
+      logger.error('wechat refund failed', { status: res.status, body: res.body });
+      throw new ProviderError(`wechat refund failed (${res.status})`);
+    }
+    const data = JSON.parse(res.body) as { refund_id?: string; status?: string };
+    // WeChat refund status: SUCCESS | PROCESSING | ABNORMAL | CLOSED.
+    const status =
+      data.status === 'SUCCESS'
+        ? RefundStatus.SUCCESS
+        : data.status === 'PROCESSING'
+          ? RefundStatus.PENDING
+          : RefundStatus.FAILED;
+    return { providerRefundId: data.refund_id, status, rawStatus: data.status ?? 'UNKNOWN' };
   }
 }

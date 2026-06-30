@@ -94,6 +94,37 @@ test('validation and routing errors return proper status codes', async () => {
   }
 });
 
+test('HTTP refund flow: create -> pay -> refund -> REFUNDED', async () => {
+  const { base, server } = await startServer();
+  try {
+    const created = await getJson(await fetch(`${base}/api/orders`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: 'u1', planId: 'monthly', method: 'wechat' }),
+    }));
+    await fetch(`${base}/api/notify/wechat`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: callbackBody({ outTradeNo: created.outTradeNo, paidAmount: 1500 }),
+    });
+
+    const refundRes = await fetch(`${base}/api/orders/${created.orderId}/refund`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason: 'customer request' }),
+    });
+    assert.equal(refundRes.status, 201);
+    const refund = await getJson(refundRes);
+    assert.equal(refund.status, 'SUCCESS');
+    assert.equal(refund.amount, 1500);
+
+    const refunds = await getJson(await fetch(`${base}/api/orders/${created.orderId}/refunds`));
+    assert.equal(refunds.refunds.length, 1);
+
+    const order = await getJson(await fetch(`${base}/api/orders/${created.orderId}`));
+    assert.equal(order.status, 'REFUNDED');
+  } finally {
+    server.close();
+  }
+});
+
 test('idempotency-key header dedupes order creation over HTTP', async () => {
   const { base, server } = await startServer();
   try {

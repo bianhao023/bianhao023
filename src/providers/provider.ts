@@ -5,6 +5,7 @@ import {
   PaymentMethod,
   QueryResult,
 } from '../domain/types';
+import { RefundRequest, RefundResult } from '../domain/refund';
 
 /** A raw inbound HTTP request as seen by a webhook handler. */
 export interface RawCallback {
@@ -35,6 +36,12 @@ export interface PaymentProvider {
 
   /** The body a provider expects in the HTTP response to its callback (e.g. WeChat/Alipay ACK). */
   callbackAck(success: boolean): { status: number; contentType: string; body: string };
+
+  /**
+   * Issue a refund. Optional: methods without an automatic refund channel
+   * (e.g. USDT) omit this, and the RefundService falls back to a manual refund.
+   */
+  refund?(order: Order, req: RefundRequest): Promise<RefundResult>;
 }
 
 /** Minimal injectable HTTP client so providers can be unit-tested with mocks. */

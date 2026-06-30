@@ -1,6 +1,8 @@
 import { Order, Subscription } from '../domain/types';
+import { Refund } from '../domain/refund';
 import {
   OrderRepository,
+  RefundRepository,
   SubscriptionRepository,
   ProcessedEventStore,
   Locker,
@@ -61,6 +63,39 @@ export class MemoryOrderRepository implements OrderRepository {
 
   async all(): Promise<Order[]> {
     return [...this.byId.values()].map(clone);
+  }
+}
+
+export class MemoryRefundRepository implements RefundRepository {
+  private byId = new Map<string, Refund>();
+  private byOutRefundNo = new Map<string, string>();
+
+  async create(refund: Refund): Promise<Refund> {
+    if (this.byOutRefundNo.has(refund.outRefundNo)) {
+      throw new Error(`duplicate outRefundNo: ${refund.outRefundNo}`);
+    }
+    this.byId.set(refund.id, clone(refund));
+    this.byOutRefundNo.set(refund.outRefundNo, refund.id);
+    return clone(refund);
+  }
+
+  async findById(id: string): Promise<Refund | undefined> {
+    const r = this.byId.get(id);
+    return r ? clone(r) : undefined;
+  }
+
+  async findByOutRefundNo(outRefundNo: string): Promise<Refund | undefined> {
+    const id = this.byOutRefundNo.get(outRefundNo);
+    return id ? this.findById(id) : undefined;
+  }
+
+  async findByOrder(orderId: string): Promise<Refund[]> {
+    return [...this.byId.values()].filter((r) => r.orderId === orderId).map(clone);
+  }
+
+  async update(refund: Refund): Promise<Refund> {
+    this.byId.set(refund.id, clone(refund));
+    return clone(refund);
   }
 }
 

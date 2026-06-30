@@ -77,6 +77,8 @@ export interface Order {
   updatedAt: number;
   expiresAt: number;
   paidAt?: number;
+  /** Total amount refunded so far, in minor units (0 when never refunded). */
+  refundedAmount?: number;
   /** Provider/method specific data (e.g. USDT receiving address, unique amount). */
   metadata: Record<string, string>;
 }

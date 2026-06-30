@@ -2,12 +2,14 @@ import { Order, PaymentMethod, ALL_METHODS } from '../domain/types';
 import { ValidationError, NotFoundError } from '../domain/errors';
 import { fromMinorUnits } from '../core/money';
 import { PaymentService } from '../services/paymentService';
+import { RefundService } from '../services/refundService';
 import { PlanCatalog } from '../services/plans';
 import { UsdtWatcher } from '../services/usdtWatcher';
 import { parseJsonBody, Router, sendJson, sendRaw, ReqContext } from './http';
 
 export interface ApiDeps {
   payments: PaymentService;
+  refunds: RefundService;
   plans: PlanCatalog;
   enabledMethods: PaymentMethod[];
   usdtWatcher?: UsdtWatcher;
@@ -24,6 +26,7 @@ function orderView(o: Order): Record<string, unknown> {
     currency: o.currency,
     amount: o.amount,
     amountDisplay: fromMinorUnits(o.amount, o.currency),
+    refundedAmount: o.refundedAmount ?? 0,
     providerTxnId: o.providerTxnId,
     createdAt: o.createdAt,
     expiresAt: o.expiresAt,
@@ -92,6 +95,27 @@ export function buildRouter(deps: ApiDeps): Router {
   r.post('/api/orders/:id/sync', async (ctx, res) => {
     const order = await deps.payments.syncOrder(ctx.params['id']);
     sendJson(res, 200, orderView(order));
+  });
+
+  // Refund (full or partial). Body: { amount?, reason?, outRefundNo? }.
+  r.post('/api/orders/:id/refund', async (ctx, res) => {
+    const body = parseJsonBody(ctx);
+    const amount = body['amount'];
+    if (amount !== undefined && (typeof amount !== 'number' || !Number.isInteger(amount))) {
+      throw new ValidationError('amount must be an integer in minor units');
+    }
+    const refund = await deps.refunds.refundOrder(ctx.params['id'], {
+      amount: amount as number | undefined,
+      reason: typeof body['reason'] === 'string' ? (body['reason'] as string) : undefined,
+      outRefundNo: typeof body['outRefundNo'] === 'string' ? (body['outRefundNo'] as string) : undefined,
+    });
+    sendJson(res, 201, refund);
+  });
+
+  // List refunds for an order.
+  r.get('/api/orders/:id/refunds', async (ctx, res) => {
+    const refunds = await deps.refunds.listOrderRefunds(ctx.params['id']);
+    sendJson(res, 200, { refunds });
   });
 
   // Provider webhooks. Raw body is preserved for signature verification.

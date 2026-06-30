@@ -8,6 +8,7 @@ import {
 } from '../src/domain/types';
 import { PaymentProvider, RawCallback, HttpClient } from '../src/providers/provider';
 import { SignatureError } from '../src/domain/errors';
+import { RefundRequest, RefundResult, RefundStatus } from '../src/domain/refund';
 import { TronChainClient, Trc20Transfer } from '../src/providers/usdt/usdtTron';
 
 /** Generate an RSA-2048 keypair (PEM) for signing tests. */
@@ -64,6 +65,14 @@ export class FakeProvider implements PaymentProvider {
 
   callbackAck(success: boolean): { status: number; contentType: string; body: string } {
     return { status: success ? 200 : 500, contentType: 'text/plain', body: success ? 'ok' : 'fail' };
+  }
+
+  refundResult: RefundResult = { providerRefundId: 'rfd_1', status: RefundStatus.SUCCESS, rawStatus: 'OK' };
+  lastRefundRequest?: RefundRequest;
+
+  async refund(_order: Order, req: RefundRequest): Promise<RefundResult> {
+    this.lastRefundRequest = req;
+    return this.refundResult;
   }
 }
 

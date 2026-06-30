@@ -5,9 +5,10 @@ A commercial-grade payment backend for a VPN service, supporting **WeChat Pay**,
 dependencies** (only Node.js ≥ 20 built-ins: `crypto`, `http`, `fetch`), which
 keeps it auditable, easy to deploy, and free of payment-SDK supply-chain risk.
 
-> Status: builds clean (`tsc`, strict mode) and passes **44 automated tests**
+> Status: builds clean (`tsc`, strict mode) and passes **59 automated tests**
 > covering signing, callbacks, the order state machine, idempotency, concurrency,
-> amount validation, USDT reconciliation, and the HTTP API end-to-end.
+> amount validation, USDT reconciliation, refunds (full/partial/manual), the SQL
+> row mappers, and the HTTP API end-to-end.
 
 ## Why one coherent codebase
 
@@ -85,6 +86,8 @@ run with any subset of WeChat / Alipay / USDT configured.
 | `POST /api/orders` | Create an order. Body: `{ userId, planId, method }`; optional `Idempotency-Key` header |
 | `GET /api/orders/:id` | Order status + pay info |
 | `POST /api/orders/:id/sync` | Force a status re-check (used while waiting on USDT) |
+| `POST /api/orders/:id/refund` | Refund an order (full or partial). Body: `{ amount?, reason?, outRefundNo? }` |
+| `GET /api/orders/:id/refunds` | List refunds issued against an order |
 | `POST /api/notify/wechat` | WeChat Pay v3 notification webhook |
 | `POST /api/notify/alipay` | Alipay async notification webhook |
 | `POST /internal/usdt/reconcile` | Trigger a USDT reconciliation pass (e.g. from cron) |
@@ -109,12 +112,68 @@ curl -X POST http://localhost:3000/api/orders \
 For USDT, `payInfo.renderAs` is `address` and `payInfo.extra.amount` is the exact
 amount the user must send so the deposit can be matched automatically.
 
+## Refunds
+
+Full and partial refunds are supported per method:
+
+- **WeChat Pay** — `POST /v3/refund/domestic/refunds` (signed).
+- **Alipay** — `alipay.trade.refund`.
+- **USDT** — there is no automatic on-chain refund; the service records a
+  `MANUAL` refund so an operator can return funds and the order is marked
+  `REFUNDED`.
+
+Refunds are idempotent by `outRefundNo`, reject over-refunding, accumulate
+partial amounts, and only move an order to `REFUNDED` once fully refunded.
+
+```bash
+curl -X POST http://localhost:3000/api/orders/<id>/refund \
+  -H 'Content-Type: application/json' \
+  -d '{"amount":500,"reason":"partial refund","outRefundNo":"RF-001"}'
+```
+
+## Deployment (Docker)
+
+```bash
+docker build -t vpn-payment-backend .
+docker run -p 3000:3000 --env-file .env vpn-payment-backend
+# or
+docker compose up --build
+```
+
+The runtime image is a slim `node:22-alpine` containing only the compiled
+`dist/` (no runtime `node_modules`, since the app has zero runtime deps), runs
+as the unprivileged `node` user, and ships a `/healthz` HEALTHCHECK.
+
 ## Production notes
 
-The storage layer is interface-based (`OrderRepository`, `SubscriptionRepository`,
-`ProcessedEventStore`, `Locker`). The included in-memory implementations are used
-for tests and single-process demos; for production, provide Postgres/Redis-backed
-implementations of those same interfaces — no business-logic changes required.
+The storage layer is interface-based (`OrderRepository`, `RefundRepository`,
+`SubscriptionRepository`, `ProcessedEventStore`, `Locker`). The included
+in-memory implementations are used for tests and single-process demos.
+
+For production, **PostgreSQL** implementations are provided in
+`src/storage/sql/` (`SqlOrderRepository`, `SqlRefundRepository`,
+`SqlSubscriptionRepository`, `SqlProcessedEventStore`) plus `schema.sql`. They
+target an injected `SqlClient` interface that is compatible with `node-postgres`,
+so the package keeps **zero hard dependencies** — add `pg` only if you use them:
+
+```ts
+import { Pool } from 'pg';
+import { buildContainer } from './container';
+import { SqlOrderRepository, SqlRefundRepository, SqlSubscriptionRepository, SqlProcessedEventStore } from './storage/sql/sqlStore';
+
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+const container = buildContainer(config, {
+  orders: new SqlOrderRepository(pool),
+  refunds: new SqlRefundRepository(pool),
+  subscriptions: new SqlSubscriptionRepository(pool),
+  processedEvents: new SqlProcessedEventStore(pool),
+});
+```
+
+`SqlProcessedEventStore.markIfNew` uses `INSERT … ON CONFLICT DO NOTHING`, which
+is atomic across multiple application instances, so callbacks are still
+processed exactly once when scaled horizontally.
+
 Run the server behind HTTPS, keep private keys in a secret manager, and configure
 the provider `notify_url`s to your public webhook endpoints.
 
