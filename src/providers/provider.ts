@@ -5,7 +5,7 @@ import {
   PaymentMethod,
   QueryResult,
 } from '../domain/types';
-import { RefundRequest, RefundResult } from '../domain/refund';
+import { RefundCallbackResult, RefundRequest, RefundResult } from '../domain/refund';
 
 /** A raw inbound HTTP request as seen by a webhook handler. */
 export interface RawCallback {
@@ -42,6 +42,14 @@ export interface PaymentProvider {
    * (e.g. USDT) omit this, and the RefundService falls back to a manual refund.
    */
   refund?(order: Order, req: RefundRequest): Promise<RefundResult>;
+
+  /**
+   * Verify and normalise an async refund-result notification (e.g. WeChat,
+   * whose refunds can settle asynchronously after returning PROCESSING). MUST
+   * throw SignatureError if authenticity cannot be proven. Methods that refund
+   * synchronously (Alipay) or have no refund channel (USDT) omit this.
+   */
+  verifyRefundCallback?(cb: RawCallback): Promise<RefundCallbackResult>;
 }
 
 /** Minimal injectable HTTP client so providers can be unit-tested with mocks. */

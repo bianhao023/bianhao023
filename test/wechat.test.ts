@@ -124,3 +124,40 @@ test('verifyCallback rejects a stale (replayed) timestamp', async () => {
   const provider = new WechatPayProvider(cfg(), new MockHttpClient(() => ({ status: 200, body: '{}' })), () => now);
   await assert.rejects(() => provider.verifyCallback(n), SignatureError);
 });
+
+function buildRefundNotification(now: number, refundStatus: string) {
+  const resourcePlain = JSON.stringify({
+    out_trade_no: 'VPN123', out_refund_no: 'RF123', refund_id: 'wx_refund_1', refund_status: refundStatus,
+  });
+  const rNonce = 'abcdefghijkl';
+  const aad = 'refund';
+  const ciphertext = aesGcmEncrypt(API_V3_KEY, rNonce, aad, resourcePlain);
+  const envelope = { id: 'rf-evt-1', resource: { ciphertext, nonce: rNonce, associated_data: aad } };
+  const body = JSON.stringify(envelope);
+  const ts = String(Math.floor(now / 1000));
+  const hNonce = 'header-nonce';
+  const signature = rsaSignSha256(`${ts}\n${hNonce}\n${body}\n`, platform.privateKey);
+  return { rawBody: body, headers: { 'wechatpay-timestamp': ts, 'wechatpay-nonce': hNonce, 'wechatpay-signature': signature } };
+}
+
+test('verifyRefundCallback maps SUCCESS and CLOSED refund notifications', async () => {
+  const now = Date.now();
+  const provider = new WechatPayProvider(cfg(), new MockHttpClient(() => ({ status: 200, body: '{}' })), () => now);
+
+  const ok = await provider.verifyRefundCallback(buildRefundNotification(now, 'SUCCESS'));
+  assert.equal(ok.status, 'SUCCESS');
+  assert.equal(ok.outRefundNo, 'RF123');
+  assert.equal(ok.providerRefundId, 'wx_refund_1');
+  assert.equal(ok.eventId, 'rf-evt-1');
+
+  const closed = await provider.verifyRefundCallback(buildRefundNotification(now, 'CLOSED'));
+  assert.equal(closed.status, 'FAILED');
+});
+
+test('verifyRefundCallback rejects a bad signature', async () => {
+  const now = Date.now();
+  const provider = new WechatPayProvider(cfg(), new MockHttpClient(() => ({ status: 200, body: '{}' })), () => now);
+  const n = buildRefundNotification(now, 'SUCCESS');
+  n.headers['wechatpay-signature'] = rsaSignSha256('forged', genRsaKeyPair().privateKey);
+  await assert.rejects(() => provider.verifyRefundCallback(n), SignatureError);
+});

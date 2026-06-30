@@ -7,22 +7,24 @@ import { buildContainer } from '../src/container';
 import { createHttpServer } from '../src/api/server';
 import { PaymentMethod } from '../src/domain/types';
 import { PaymentProvider } from '../src/providers/provider';
-import { FakeProvider, callbackBody } from './_helpers';
+import { FakeProvider, callbackBody, refundCallbackBody } from './_helpers';
+import { RefundStatus } from '../src/domain/refund';
 
 /** Await a fetch and parse JSON as `any` (Response.json() is typed unknown). */
 async function getJson(res: Response): Promise<any> {
   return (await res.json()) as any;
 }
 
-function startServer(): Promise<{ base: string; server: Server }> {
+function startServer(): Promise<{ base: string; server: Server; wechat: FakeProvider }> {
   const config: AppConfig = { port: 0, orderTtlMinutes: 15, enabledMethods: [] };
-  const providers = new Map<PaymentMethod, PaymentProvider>([['wechat', new FakeProvider('wechat')]]);
+  const wechat = new FakeProvider('wechat');
+  const providers = new Map<PaymentMethod, PaymentProvider>([['wechat', wechat]]);
   const container = buildContainer(config, { providers });
   const server = createHttpServer(container);
   return new Promise((resolve) => {
     server.listen(0, () => {
       const port = (server.address() as AddressInfo).port;
-      resolve({ base: `http://127.0.0.1:${port}`, server });
+      resolve({ base: `http://127.0.0.1:${port}`, server, wechat });
     });
   });
 }
@@ -120,6 +122,36 @@ test('HTTP refund flow: create -> pay -> refund -> REFUNDED', async () => {
 
     const order = await getJson(await fetch(`${base}/api/orders/${created.orderId}`));
     assert.equal(order.status, 'REFUNDED');
+  } finally {
+    server.close();
+  }
+});
+
+test('HTTP async refund callback finalises a PROCESSING refund', async () => {
+  const { base, server, wechat } = await startServer();
+  try {
+    wechat.refundResult = { providerRefundId: 'wxr', status: RefundStatus.PENDING, rawStatus: 'PROCESSING' };
+    const created = await getJson(await fetch(`${base}/api/orders`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: 'u1', planId: 'monthly', method: 'wechat' }),
+    }));
+    await fetch(`${base}/api/notify/wechat`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: callbackBody({ outTradeNo: created.outTradeNo, paidAmount: 1500 }),
+    });
+    const refund = await getJson(await fetch(`${base}/api/orders/${created.orderId}/refund`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+    }));
+    assert.equal(refund.status, 'PENDING');
+    // Not yet REFUNDED.
+    assert.equal((await getJson(await fetch(`${base}/api/orders/${created.orderId}`))).status, 'FULFILLED');
+
+    const ack = await fetch(`${base}/api/notify/wechat/refund`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: refundCallbackBody({ outRefundNo: refund.outRefundNo, status: RefundStatus.SUCCESS }),
+    });
+    assert.equal(ack.status, 200);
+    assert.equal((await getJson(await fetch(`${base}/api/orders/${created.orderId}`))).status, 'REFUNDED');
   } finally {
     server.close();
   }

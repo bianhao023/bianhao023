@@ -5,11 +5,21 @@ import {
   NotFoundError,
   ValidationError,
 } from '../domain/errors';
-import { PaymentProvider } from '../providers/provider';
-import { Locker, OrderRepository, RefundRepository } from '../storage/repository';
+import { PaymentProvider, RawCallback } from '../providers/provider';
+import {
+  Locker,
+  OrderRepository,
+  ProcessedEventStore,
+  RefundRepository,
+} from '../storage/repository';
 import { assertTransition } from '../core/orderStateMachine';
 import { newOutTradeNo, uuid } from '../utils/ids';
 import { logger } from '../utils/logger';
+
+/** A refund whose funds have actually left us (vs. still PROCESSING). */
+function isSettled(status: RefundStatus): boolean {
+  return status === RefundStatus.SUCCESS || status === RefundStatus.MANUAL;
+}
 
 export interface RefundInput {
   /** Amount to refund in minor units. Defaults to the full remaining amount. */
@@ -23,6 +33,7 @@ export interface RefundServiceDeps {
   providers: Map<PaymentMethod, PaymentProvider>;
   orders: OrderRepository;
   refunds: RefundRepository;
+  processedEvents: ProcessedEventStore;
   locker: Locker;
   now?: () => number;
 }
@@ -99,10 +110,12 @@ export class RefundService {
       };
       await this.deps.refunds.create(refund);
 
-      // Only count settled/processing/manual refunds toward the order total;
-      // a hard FAILED refund leaves the order untouched.
+      // A hard FAILED refund leaves the order untouched. Otherwise we RESERVE
+      // the amount (so it can't be double-refunded), but only transition the
+      // order to REFUNDED once the refund is actually settled — a PENDING
+      // (e.g. WeChat PROCESSING) refund waits for the async result callback.
       if (result.status !== RefundStatus.FAILED) {
-        await this.applyRefundToOrder(order, alreadyRefunded + amount);
+        await this.reserveRefund(order, alreadyRefunded + amount, isSettled(result.status));
       }
 
       logger.info('refund issued', {
@@ -115,11 +128,75 @@ export class RefundService {
     });
   }
 
-  private async applyRefundToOrder(order: Order, newRefundedTotal: number): Promise<void> {
+  /**
+   * Verify and apply an async refund-result notification (WeChat). On SUCCESS
+   * the refund (and order, if fully refunded) is finalised; on FAILED the
+   * reserved amount is released. Idempotent and replay-protected.
+   */
+  async handleRefundCallback(
+    method: PaymentMethod,
+    raw: RawCallback,
+  ): Promise<{ status: number; contentType: string; body: string }> {
+    const provider = this.deps.providers.get(method);
+    if (!provider || !provider.verifyRefundCallback) {
+      throw new ValidationError(`refund callbacks not supported for method: ${method}`);
+    }
+    const result = await provider.verifyRefundCallback(raw); // throws on bad signature
+
+    const isNew = await this.deps.processedEvents.markIfNew(`rfcb:${method}:${result.eventId}`);
+    if (!isNew) {
+      logger.info('duplicate refund callback ignored', { eventId: result.eventId, method });
+      return provider.callbackAck(true);
+    }
+
+    const refund = await this.deps.refunds.findByOutRefundNo(result.outRefundNo);
+    if (!refund) {
+      logger.error('refund callback for unknown refund', { outRefundNo: result.outRefundNo });
+      return provider.callbackAck(false);
+    }
+
+    await this.deps.locker.withLock(refund.orderId, async () => {
+      const fresh = await this.deps.refunds.findByOutRefundNo(result.outRefundNo);
+      if (!fresh) return;
+      // Idempotent: only a PENDING refund is awaiting a result.
+      if (fresh.status !== RefundStatus.PENDING) return;
+
+      const now = this.now();
+      fresh.status = result.status;
+      fresh.providerRefundId = result.providerRefundId || fresh.providerRefundId;
+      fresh.rawStatus = result.rawStatus;
+      fresh.updatedAt = now;
+      await this.deps.refunds.update(fresh);
+
+      const order = await this.deps.orders.findById(fresh.orderId);
+      if (!order) return;
+
+      if (result.status === RefundStatus.SUCCESS) {
+        // The reservation already counts this amount; settle the order if full.
+        await this.reserveRefund(order, order.refundedAmount ?? 0, true);
+      } else {
+        // FAILED: release the previously reserved amount.
+        const released = Math.max(0, (order.refundedAmount ?? 0) - fresh.amount);
+        await this.deps.orders.update({ ...order, refundedAmount: released, updatedAt: now });
+      }
+      logger.info('refund callback applied', {
+        orderId: order.id,
+        refundId: fresh.id,
+        status: fresh.status,
+      });
+    });
+
+    return provider.callbackAck(true);
+  }
+
+  /**
+   * Record the reserved refund total on the order, transitioning to REFUNDED
+   * only when the order is fully refunded AND that refund is settled.
+   */
+  private async reserveRefund(order: Order, newRefundedTotal: number, settled: boolean): Promise<void> {
     const now = this.now();
     const updated: Order = { ...order, refundedAmount: newRefundedTotal, updatedAt: now };
-    // A full refund moves the order to REFUNDED; partial refunds keep it as-is.
-    if (newRefundedTotal >= order.amount) {
+    if (settled && newRefundedTotal >= order.amount && order.status !== OrderStatus.REFUNDED) {
       updated.status = assertTransition(order.status, OrderStatus.REFUNDED);
     }
     await this.deps.orders.update(updated);

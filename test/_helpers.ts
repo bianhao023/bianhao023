@@ -8,7 +8,7 @@ import {
 } from '../src/domain/types';
 import { PaymentProvider, RawCallback, HttpClient } from '../src/providers/provider';
 import { SignatureError } from '../src/domain/errors';
-import { RefundRequest, RefundResult, RefundStatus } from '../src/domain/refund';
+import { RefundCallbackResult, RefundRequest, RefundResult, RefundStatus } from '../src/domain/refund';
 import { TronChainClient, Trc20Transfer } from '../src/providers/usdt/usdtTron';
 
 /** Generate an RSA-2048 keypair (PEM) for signing tests. */
@@ -74,6 +74,11 @@ export class FakeProvider implements PaymentProvider {
     this.lastRefundRequest = req;
     return this.refundResult;
   }
+
+  async verifyRefundCallback(cb: RawCallback): Promise<RefundCallbackResult> {
+    if (!this.signatureValid) throw new SignatureError('fake bad refund signature');
+    return JSON.parse(cb.rawBody) as RefundCallbackResult;
+  }
 }
 
 /** Programmable HttpClient that returns queued responses and records requests. */
@@ -117,6 +122,20 @@ export function callbackBody(over: Partial<CallbackResult> & { outTradeNo: strin
     currency: 'CNY',
     eventId: `evt_${Math.random().toString(16).slice(2)}`,
     rawStatus: 'SUCCESS',
+    ...over,
+  };
+  return JSON.stringify(full);
+}
+
+/** Build a RefundCallbackResult body for FakeProvider-driven tests. */
+export function refundCallbackBody(
+  over: Partial<RefundCallbackResult> & { outRefundNo: string; status: RefundStatus.SUCCESS | RefundStatus.FAILED },
+): string {
+  const full: RefundCallbackResult = {
+    outTradeNo: 'VPN1',
+    providerRefundId: `prf_${Math.random().toString(16).slice(2)}`,
+    eventId: `rfevt_${Math.random().toString(16).slice(2)}`,
+    rawStatus: over.status === RefundStatus.SUCCESS ? 'SUCCESS' : 'CLOSED',
     ...over,
   };
   return JSON.stringify(full);

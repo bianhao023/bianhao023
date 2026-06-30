@@ -129,6 +129,15 @@ export function buildRouter(deps: ApiDeps): Router {
   r.post('/api/notify/wechat', notify('wechat'));
   r.post('/api/notify/alipay', notify('alipay'));
 
+  // Async refund-result webhook (WeChat refunds can settle after PROCESSING).
+  r.post('/api/notify/wechat/refund', async (ctx, res) => {
+    const ack = await deps.refunds.handleRefundCallback('wechat', {
+      rawBody: ctx.rawBody,
+      headers: ctx.headers,
+    });
+    sendRaw(res, ack.status, ack.contentType, ack.body);
+  });
+
   // Internal endpoint to trigger a USDT reconciliation pass (e.g. from cron).
   r.post('/internal/usdt/reconcile', async (_ctx, res) => {
     const settled = deps.usdtWatcher ? await deps.usdtWatcher.reconcileOnce() : 0;

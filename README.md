@@ -5,10 +5,11 @@ A commercial-grade payment backend for a VPN service, supporting **WeChat Pay**,
 dependencies** (only Node.js ≥ 20 built-ins: `crypto`, `http`, `fetch`), which
 keeps it auditable, easy to deploy, and free of payment-SDK supply-chain risk.
 
-> Status: builds clean (`tsc`, strict mode) and passes **59 automated tests**
+> Status: builds clean (`tsc`, strict mode) and passes **66 automated tests**
 > covering signing, callbacks, the order state machine, idempotency, concurrency,
-> amount validation, USDT reconciliation, refunds (full/partial/manual), the SQL
-> row mappers, and the HTTP API end-to-end.
+> amount validation, USDT reconciliation, refunds (full/partial/manual and
+> asynchronous PROCESSING→final settlement), the SQL row mappers, and the HTTP
+> API end-to-end.
 
 ## Why one coherent codebase
 
@@ -88,7 +89,8 @@ run with any subset of WeChat / Alipay / USDT configured.
 | `POST /api/orders/:id/sync` | Force a status re-check (used while waiting on USDT) |
 | `POST /api/orders/:id/refund` | Refund an order (full or partial). Body: `{ amount?, reason?, outRefundNo? }` |
 | `GET /api/orders/:id/refunds` | List refunds issued against an order |
-| `POST /api/notify/wechat` | WeChat Pay v3 notification webhook |
+| `POST /api/notify/wechat` | WeChat Pay v3 payment notification webhook |
+| `POST /api/notify/wechat/refund` | WeChat Pay v3 async refund-result webhook |
 | `POST /api/notify/alipay` | Alipay async notification webhook |
 | `POST /internal/usdt/reconcile` | Trigger a USDT reconciliation pass (e.g. from cron) |
 
@@ -124,6 +126,24 @@ Full and partial refunds are supported per method:
 
 Refunds are idempotent by `outRefundNo`, reject over-refunding, accumulate
 partial amounts, and only move an order to `REFUNDED` once fully refunded.
+
+### Asynchronous refund settlement
+
+WeChat refunds can return `PROCESSING` and settle later. The system handles this
+safely with a **reserve-then-confirm** model:
+
+1. When a refund is created, its amount is **reserved** on the order
+   (`refundedAmount` increases, blocking double-refunds) but the order is **not**
+   yet marked `REFUNDED` if the refund is still `PENDING`.
+2. WeChat later POSTs the result to `/api/notify/wechat/refund`. The signed,
+   AES-GCM-encrypted notification is verified and deduplicated, then:
+   - `SUCCESS` → the refund is finalised and the order becomes `REFUNDED` if now
+     fully refunded;
+   - `CLOSED`/`ABNORMAL` → the refund is marked `FAILED` and the **reserved
+     amount is released**, so the order can be refunded again.
+
+Synchronous methods (Alipay) settle immediately and never enter `PENDING`; USDT
+records a `MANUAL` refund (settled, operator-driven).
 
 ```bash
 curl -X POST http://localhost:3000/api/orders/<id>/refund \

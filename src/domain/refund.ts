@@ -46,3 +46,15 @@ export interface RefundResult {
   status: RefundStatus;
   rawStatus: string;
 }
+
+/** Normalised result of verifying an async refund-result notification. */
+export interface RefundCallbackResult {
+  outRefundNo: string;
+  outTradeNo: string;
+  providerRefundId: string;
+  /** Mapped to a terminal status: SUCCESS (settled) or FAILED (closed/abnormal). */
+  status: RefundStatus.SUCCESS | RefundStatus.FAILED;
+  /** Stable id used to deduplicate replayed notifications. */
+  eventId: string;
+  rawStatus: string;
+}

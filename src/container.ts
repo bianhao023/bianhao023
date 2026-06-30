@@ -90,7 +90,14 @@ export function buildContainer(config: AppConfig, overrides: ContainerOverrides 
     now,
   });
 
-  const refunds = new RefundService({ providers, orders, refunds: refundsRepo, locker, now });
+  const refunds = new RefundService({
+    providers,
+    orders,
+    refunds: refundsRepo,
+    processedEvents,
+    locker,
+    now,
+  });
 
   if (providers.has('usdt')) {
     usdtWatcher = new UsdtWatcher(orders, payments);

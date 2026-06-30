@@ -6,7 +6,7 @@ import {
   QueryResult,
 } from '../../domain/types';
 import { ProviderError, SignatureError } from '../../domain/errors';
-import { RefundRequest, RefundResult, RefundStatus } from '../../domain/refund';
+import { RefundCallbackResult, RefundRequest, RefundResult, RefundStatus } from '../../domain/refund';
 import { HttpClient, PaymentProvider, RawCallback } from '../provider';
 import { aesGcmDecrypt } from '../../utils/crypto';
 import { buildAuthorizationHeader, verifyNotificationSignature } from './sign';
@@ -73,7 +73,12 @@ export class WechatPayProvider implements PaymentProvider {
     };
   }
 
-  async verifyCallback(cb: RawCallback): Promise<CallbackResult> {
+  /**
+   * Verify a v3 notification's signature + timestamp, then AES-GCM-decrypt its
+   * resource. Shared by payment and refund notifications. Throws SignatureError
+   * if authenticity cannot be proven.
+   */
+  private verifyAndDecrypt(cb: RawCallback): { eventId: string; data: Record<string, unknown> } {
     const timestamp = cb.headers['wechatpay-timestamp'];
     const nonce = cb.headers['wechatpay-nonce'];
     const signature = cb.headers['wechatpay-signature'];
@@ -100,28 +105,49 @@ export class WechatPayProvider implements PaymentProvider {
       id: string;
       resource: { ciphertext: string; nonce: string; associated_data: string };
     };
-
     const plaintext = aesGcmDecrypt(
       this.cfg.apiV3Key,
       envelope.resource.nonce,
       envelope.resource.associated_data,
       envelope.resource.ciphertext,
     );
-    const data = JSON.parse(plaintext) as {
+    return { eventId: envelope.id, data: JSON.parse(plaintext) as Record<string, unknown> };
+  }
+
+  async verifyCallback(cb: RawCallback): Promise<CallbackResult> {
+    const { eventId, data } = this.verifyAndDecrypt(cb);
+    const d = data as {
       out_trade_no: string;
       transaction_id: string;
       trade_state: string;
       amount: { total: number; payer_total: number };
     };
-
     return {
-      outTradeNo: data.out_trade_no,
-      providerTxnId: data.transaction_id,
-      paid: data.trade_state === 'SUCCESS',
-      paidAmount: data.amount.payer_total ?? data.amount.total,
+      outTradeNo: d.out_trade_no,
+      providerTxnId: d.transaction_id,
+      paid: d.trade_state === 'SUCCESS',
+      paidAmount: d.amount.payer_total ?? d.amount.total,
       currency: 'CNY',
-      eventId: envelope.id,
-      rawStatus: data.trade_state,
+      eventId,
+      rawStatus: d.trade_state,
+    };
+  }
+
+  async verifyRefundCallback(cb: RawCallback): Promise<RefundCallbackResult> {
+    const { eventId, data } = this.verifyAndDecrypt(cb);
+    const d = data as {
+      out_trade_no: string;
+      out_refund_no: string;
+      refund_id: string;
+      refund_status: string; // SUCCESS | CLOSED | ABNORMAL
+    };
+    return {
+      outRefundNo: d.out_refund_no,
+      outTradeNo: d.out_trade_no,
+      providerRefundId: d.refund_id,
+      status: d.refund_status === 'SUCCESS' ? RefundStatus.SUCCESS : RefundStatus.FAILED,
+      eventId,
+      rawStatus: d.refund_status,
     };
   }
 

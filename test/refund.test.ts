@@ -10,7 +10,7 @@ import { WechatPayProvider } from '../src/providers/wechat/wechatPay';
 import { AlipayProvider } from '../src/providers/alipay/alipay';
 import { UsdtTronProvider } from '../src/providers/usdt/usdtTron';
 import { MemorySubscriptionRepository } from '../src/storage/memoryStore';
-import { genRsaKeyPair, MockHttpClient, FakeProvider, FakeChainClient, callbackBody } from './_helpers';
+import { genRsaKeyPair, MockHttpClient, FakeProvider, FakeChainClient, callbackBody, refundCallbackBody } from './_helpers';
 
 function order(method: PaymentMethod = 'wechat'): Order {
   const now = Date.now();
@@ -156,6 +156,75 @@ test('refund is idempotent by outRefundNo', async () => {
   assert.equal(a.id, b.id);
   const o = await h.container.payments.getOrder(h.orderId);
   assert.equal(o?.refundedAmount, 500); // not applied twice
+});
+
+test('PENDING refund waits for the async result; SUCCESS callback finalises REFUNDED', async () => {
+  const h = await paidOrderHarness();
+  h.wechat.refundResult = { providerRefundId: 'wxr', status: RefundStatus.PENDING, rawStatus: 'PROCESSING' };
+
+  const refund = await h.container.refunds.refundOrder(h.orderId);
+  assert.equal(refund.status, RefundStatus.PENDING);
+  // Reserved but NOT yet refunded.
+  let o = await h.container.payments.getOrder(h.orderId);
+  assert.equal(o?.status, OrderStatus.FULFILLED);
+  assert.equal(o?.refundedAmount, 1500);
+
+  // A second refund must be blocked while the first reservation stands.
+  await assert.rejects(() => h.container.refunds.refundOrder(h.orderId, { amount: 100 }), ValidationError);
+
+  const ack = await h.container.refunds.handleRefundCallback('wechat', {
+    rawBody: refundCallbackBody({ outRefundNo: refund.outRefundNo, status: RefundStatus.SUCCESS }),
+    headers: {},
+  });
+  assert.equal(ack.status, 200);
+
+  o = await h.container.payments.getOrder(h.orderId);
+  assert.equal(o?.status, OrderStatus.REFUNDED);
+  const refunds = await h.container.refunds.listOrderRefunds(h.orderId);
+  assert.equal(refunds[0].status, RefundStatus.SUCCESS);
+});
+
+test('PENDING refund FAILED callback releases the reservation', async () => {
+  const h = await paidOrderHarness();
+  h.wechat.refundResult = { providerRefundId: 'wxr', status: RefundStatus.PENDING, rawStatus: 'PROCESSING' };
+
+  const refund = await h.container.refunds.refundOrder(h.orderId);
+  await h.container.refunds.handleRefundCallback('wechat', {
+    rawBody: refundCallbackBody({ outRefundNo: refund.outRefundNo, status: RefundStatus.FAILED }),
+    headers: {},
+  });
+
+  const o = await h.container.payments.getOrder(h.orderId);
+  assert.equal(o?.status, OrderStatus.FULFILLED); // never transitioned
+  assert.equal(o?.refundedAmount, 0); // reservation released
+
+  // The order can now be refunded again (this time settling immediately).
+  h.wechat.refundResult = { providerRefundId: 'wxr2', status: RefundStatus.SUCCESS, rawStatus: 'OK' };
+  await h.container.refunds.refundOrder(h.orderId);
+  assert.equal((await h.container.payments.getOrder(h.orderId))?.status, OrderStatus.REFUNDED);
+});
+
+test('duplicate refund callback is idempotent', async () => {
+  const h = await paidOrderHarness();
+  h.wechat.refundResult = { providerRefundId: 'wxr', status: RefundStatus.PENDING, rawStatus: 'PROCESSING' };
+  const refund = await h.container.refunds.refundOrder(h.orderId);
+  const body = refundCallbackBody({ outRefundNo: refund.outRefundNo, status: RefundStatus.SUCCESS, eventId: 'fixed' });
+
+  await h.container.refunds.handleRefundCallback('wechat', { rawBody: body, headers: {} });
+  await h.container.refunds.handleRefundCallback('wechat', { rawBody: body, headers: {} });
+
+  const refunds = await h.container.refunds.listOrderRefunds(h.orderId);
+  assert.equal(refunds.filter((r) => r.status === RefundStatus.SUCCESS).length, 1);
+  assert.equal((await h.container.payments.getOrder(h.orderId))?.refundedAmount, 1500);
+});
+
+test('refund callback with a bad signature is rejected', async () => {
+  const h = await paidOrderHarness();
+  h.wechat.signatureValid = false;
+  await assert.rejects(
+    () => h.container.refunds.handleRefundCallback('wechat', { rawBody: '{}', headers: {} }),
+    /signature/,
+  );
 });
 
 test('USDT order without a refund channel records a MANUAL refund', async () => {
