@@ -29,6 +29,8 @@ import { ExpiryService } from './services/expiryService';
 import { ExpiryWatcher } from './services/expiryWatcher';
 import { UsdtWatcher } from './services/usdtWatcher';
 import { UserService } from './services/userService';
+import { ReconciliationService } from './services/reconciliationService';
+import { AuditLog, InMemoryAuditLog } from './audit/auditLog';
 import { LoggerNotifier, Notifier } from './notifications/notifier';
 import { TemplatedEmailNotifier } from './notifications/emailNotifier';
 import { SmtpMailSender } from './notifications/smtpMailSender';
@@ -48,6 +50,7 @@ export interface ContainerOverrides {
   locker?: Locker;
   plans?: PlanCatalog;
   notifier?: Notifier;
+  audit?: AuditLog;
   now?: () => number;
   /** Force-enable/replace providers regardless of config (test convenience). */
   providers?: Map<PaymentMethod, PaymentProvider>;
@@ -62,6 +65,8 @@ export interface Container {
   expiry: ExpiryService;
   expiryWatcher: ExpiryWatcher;
   users: UserService;
+  reconciliation: ReconciliationService;
+  audit: AuditLog;
   plans: PlanCatalog;
   metrics: Metrics;
   routerMetrics: RouterMetrics;
@@ -81,8 +86,9 @@ export function buildContainer(config: AppConfig, overrides: ContainerOverrides 
   const locker = overrides.locker ?? new InProcessLocker();
   const plans = overrides.plans ?? new PlanCatalog();
   const now = overrides.now ?? Date.now;
+  const audit = overrides.audit ?? new InMemoryAuditLog(now);
 
-  const users = new UserService(usersRepo, now);
+  const users = new UserService(usersRepo, now, audit);
   const subscriptions = new SubscriptionService(subscriptionsRepo, plans, now);
 
   const providers = overrides.providers ?? new Map<PaymentMethod, PaymentProvider>();
@@ -110,6 +116,7 @@ export function buildContainer(config: AppConfig, overrides: ContainerOverrides 
     plans,
     orderTtlMinutes: config.orderTtlMinutes,
     usdtUniqueDeltaMax: config.usdt?.uniqueAmountMaxDelta ?? 9999,
+    audit,
     now,
   });
 
@@ -119,10 +126,12 @@ export function buildContainer(config: AppConfig, overrides: ContainerOverrides 
     refunds: refundsRepo,
     processedEvents,
     locker,
+    audit,
     now,
   });
 
   const reports = new ReportService(orders, refundsRepo);
+  const reconciliation = new ReconciliationService(orders, refundsRepo, () => payments.expireStaleOrders(), now);
 
   // With SMTP configured we can close the loop: expiry notifications become
   // localized emails addressed via the user directory. Otherwise just log.
@@ -184,7 +193,8 @@ export function buildContainer(config: AppConfig, overrides: ContainerOverrides 
   const enabledMethods = [...providers.keys()];
 
   return {
-    config, orders, payments, refunds, reports, expiry, expiryWatcher, users, plans,
+    config, orders, payments, refunds, reports, expiry, expiryWatcher, users,
+    reconciliation, audit, plans,
     metrics, routerMetrics, rateLimit, usdtWatcher, enabledMethods,
   };
 }

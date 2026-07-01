@@ -3,6 +3,7 @@ import { UserRepository } from '../storage/repository';
 import { UserContact } from '../notifications/emailNotifier';
 import { SUPPORTED_LOCALES } from '../notifications/emailTemplates';
 import { ValidationError, AppError } from '../domain/errors';
+import { AuditLog } from '../audit/auditLog';
 import { hashPassword, verifyPassword } from '../utils/crypto';
 import { uuid } from '../utils/ids';
 import { randomBytes } from 'node:crypto';
@@ -30,6 +31,7 @@ export class UserService {
   constructor(
     private readonly users: UserRepository,
     private readonly now: () => number = Date.now,
+    private readonly audit?: AuditLog,
   ) {}
 
   async register(input: RegisterInput): Promise<{ user: PublicUser; apiKey: string }> {
@@ -57,6 +59,7 @@ export class UserService {
       updatedAt: now,
     };
     const created = await this.users.create(user);
+    await this.audit?.record({ action: 'user.registered', actor: created.id, subjectId: created.id, metadata: { email } });
     return { user: toPublicUser(created), apiKey };
   }
 
@@ -66,6 +69,7 @@ export class UserService {
     if (!user || !verifyPassword(password, user.passwordHash)) {
       throw new AuthFailedError();
     }
+    await this.audit?.record({ action: 'user.login', actor: user.id, subjectId: user.id });
     return { user: toPublicUser(user), apiKey: user.apiKey };
   }
 

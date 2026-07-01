@@ -13,6 +13,7 @@ import {
   RefundRepository,
 } from '../storage/repository';
 import { assertTransition } from '../core/orderStateMachine';
+import { AuditLog } from '../audit/auditLog';
 import { newOutTradeNo, uuid } from '../utils/ids';
 import { logger } from '../utils/logger';
 
@@ -35,6 +36,7 @@ export interface RefundServiceDeps {
   refunds: RefundRepository;
   processedEvents: ProcessedEventStore;
   locker: Locker;
+  audit?: AuditLog;
   now?: () => number;
 }
 
@@ -123,6 +125,12 @@ export class RefundService {
         refundId: refund.id,
         amount,
         status: refund.status,
+      });
+      await this.deps.audit?.record({
+        action: 'refund.issued',
+        actor: order.userId,
+        subjectId: order.id,
+        metadata: { refundId: refund.id, amount, status: refund.status },
       });
       return refund;
     });

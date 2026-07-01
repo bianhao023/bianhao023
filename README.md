@@ -5,14 +5,14 @@ A commercial-grade payment backend for a VPN service, supporting **WeChat Pay**,
 dependencies** (only Node.js ≥ 20 built-ins: `crypto`, `http`, `fetch`), which
 keeps it auditable, easy to deploy, and free of payment-SDK supply-chain risk.
 
-> Status: builds clean (`tsc`, strict mode) and passes **115 automated tests**
+> Status: builds clean (`tsc`, strict mode) and passes **139 automated tests**
 > covering signing, callbacks, the order state machine, idempotency, concurrency,
 > amount validation, USDT reconciliation, refunds (full/partial/manual and
 > asynchronous PROCESSING→final settlement), subscription expiry & notifications,
-> accounts (register/login/API-key auth), admin reporting/reconciliation,
-> Prometheus metrics, in-process & Redis rate limiting, SMTP email delivery,
-> localized billing emails, monitoring artifacts, the SQL row mappers, and the
-> HTTP API end-to-end.
+> accounts (register/login/API-key auth), admin reporting, financial-consistency
+> reconciliation, an audit log, an OpenAPI spec, Prometheus metrics, in-process &
+> Redis rate limiting, SMTP email delivery, localized billing emails, monitoring
+> artifacts, the SQL row mappers, and the HTTP API end-to-end.
 
 ## Why one coherent codebase
 
@@ -86,6 +86,8 @@ run with any subset of WeChat / Alipay / USDT configured.
 | Method & path | Description |
 |---|---|
 | `GET /healthz` | Liveness + enabled methods |
+| `GET /openapi.json` | OpenAPI 3.0.3 specification |
+| `GET /docs` | Swagger UI (interactive API docs) |
 | `GET /api/plans` | List VPN plans with prices |
 | `POST /api/users/register` | Create an account. Body: `{ email, password, locale?, name? }` |
 | `POST /api/users/login` | Authenticate; returns the account's API key |
@@ -104,6 +106,8 @@ run with any subset of WeChat / Alipay / USDT configured.
 | `GET /admin/orders` | Paginated orders (`limit`,`offset`,filters) 🔒 |
 | `GET /admin/refunds` | Paginated refunds (`limit`,`offset`) 🔒 |
 | `POST /admin/expiry/run` | Run subscription reminders + deactivation pass 🔒 |
+| `POST /admin/reconciliation` | Run a financial-consistency audit (`?heal=true` to expire stale) 🔒 |
+| `GET /admin/audit` | Query the audit log (filters: `action`,`actor`,`subjectId`,`from`,`to`) 🔒 |
 | `GET /metrics` | Prometheus metrics (HTTP + business gauges) |
 
 🔒 = requires `Authorization: Bearer $ADMIN_TOKEN`. Admin endpoints are disabled
@@ -175,6 +179,25 @@ email and preferred locale, the expiry notifier can deliver **localized billing
 emails automatically**: when `SMTP_*` is configured, the container wires
 `TemplatedEmailNotifier` with the user directory as its lookup — no extra glue
 code needed.
+
+## API documentation
+
+The full API is described by an OpenAPI 3.0.3 spec at `GET /openapi.json`, with
+interactive Swagger UI at `GET /docs`. The spec (`src/api/openapi.ts`) covers
+every endpoint with schemas, tags, and the `bearerAuth` security scheme.
+
+## Audit log & consistency checks
+
+- **Audit log** (`src/audit/auditLog.ts`) records significant actions
+  (`order.created`, `order.fulfilled`, `refund.issued`, `user.registered`,
+  `user.login`, `admin.access`). Query it via `GET /admin/audit` with
+  action/actor/subject/time filters and pagination. Swap the in-memory store
+  for a durable `AuditLog` implementation in production.
+- **Reconciliation** (`src/services/reconciliationService.ts`, `POST
+  /admin/reconciliation`) audits financial consistency across orders and
+  refunds — flagging paid-but-unfulfilled, fulfilled-without-payment,
+  over-refund, refund-ledger drift, and stale-pending orders. It is read-only
+  unless `?heal=true`, which expires stale pending orders. Drive it from cron.
 
 ## Reconciliation & reporting
 

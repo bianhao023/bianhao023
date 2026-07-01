@@ -10,6 +10,8 @@ export function createHttpServer(container: Container): Server {
     reports: container.reports,
     expiry: container.expiry,
     users: container.users,
+    reconciliation: container.reconciliation,
+    audit: container.audit,
     plans: container.plans,
     enabledMethods: container.enabledMethods,
     adminToken: container.config.adminToken,

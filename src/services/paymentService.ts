@@ -21,6 +21,7 @@ import { assertTransition, isTerminal } from '../core/orderStateMachine';
 import { allocateUniqueAmount } from '../providers/usdt/usdtTron';
 import { SubscriptionService } from './subscriptionService';
 import { PlanCatalog } from './plans';
+import { AuditLog } from '../audit/auditLog';
 import { newOutTradeNo, uuid } from '../utils/ids';
 import { logger } from '../utils/logger';
 
@@ -45,6 +46,7 @@ export interface PaymentServiceDeps {
   plans: PlanCatalog;
   orderTtlMinutes: number;
   usdtUniqueDeltaMax: number;
+  audit?: AuditLog;
   now?: () => number;
 }
 
@@ -124,6 +126,12 @@ export class PaymentService {
       method: saved.method,
       amount: saved.amount,
       currency: saved.currency,
+    });
+    await this.deps.audit?.record({
+      action: 'order.created',
+      actor: saved.userId,
+      subjectId: saved.id,
+      metadata: { method: saved.method, amount: saved.amount, currency: saved.currency },
     });
     return { order: saved, payInfo };
   }
@@ -266,6 +274,12 @@ export class PaymentService {
 
       const { order: fulfilled } = await this.deps.subscriptions.fulfillOrder(paidOrder);
       const finalOrder = await this.deps.orders.update(fulfilled);
+      await this.deps.audit?.record({
+        action: 'order.fulfilled',
+        actor: finalOrder.userId,
+        subjectId: finalOrder.id,
+        metadata: { providerTxnId: paid.providerTxnId, amount: paid.paidAmount, currency: paid.currency },
+      });
       return finalOrder;
     });
   }

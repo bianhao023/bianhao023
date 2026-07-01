@@ -7,6 +7,10 @@ import { RefundService } from '../services/refundService';
 import { ReportService, ReportFilter } from '../services/reportService';
 import { ExpiryService } from '../services/expiryService';
 import { UserService } from '../services/userService';
+import { ReconciliationService } from '../services/reconciliationService';
+import { AuditLog } from '../audit/auditLog';
+import { buildOpenApiSpec } from './openapi';
+import { SWAGGER_UI_HTML } from './docsHtml';
 import { toPublicUser } from '../domain/user';
 import { PlanCatalog } from '../services/plans';
 import { UsdtWatcher } from '../services/usdtWatcher';
@@ -19,6 +23,8 @@ export interface ApiDeps {
   reports: ReportService;
   expiry: ExpiryService;
   users: UserService;
+  reconciliation: ReconciliationService;
+  audit: AuditLog;
   plans: PlanCatalog;
   enabledMethods: PaymentMethod[];
   /** Bearer token guarding /admin. Undefined disables admin endpoints. */
@@ -76,6 +82,12 @@ function requireAdmin(ctx: ReqContext, adminToken?: string): void {
   const prefix = 'Bearer ';
   const token = header.startsWith(prefix) ? header.slice(prefix.length) : '';
   if (!safeEqual(token, adminToken)) throw new AuthError('invalid admin token');
+}
+
+/** Authenticate an admin request and record the access in the audit log. */
+async function adminGuard(ctx: ReqContext, deps: ApiDeps): Promise<void> {
+  requireAdmin(ctx, deps.adminToken);
+  await deps.audit.record({ action: 'admin.access', subjectId: ctx.path, metadata: { method: ctx.method } });
 }
 
 /** Parse a non-negative integer query param with a default and cap. */
@@ -241,14 +253,18 @@ export function buildRouter(deps: ApiDeps): Router {
     sendJson(res, 200, { settled });
   });
 
+  // ── API documentation ────────────────────────────────────────────────────
+  r.get('/openapi.json', (_ctx, res) => sendJson(res, 200, buildOpenApiSpec(deps.enabledMethods)));
+  r.get('/docs', (_ctx, res) => sendRaw(res, 200, 'text/html; charset=utf-8', SWAGGER_UI_HTML));
+
   // ── Admin / reconciliation (bearer-token protected) ──────────────────────
   r.get('/admin/reports/summary', async (ctx, res) => {
-    requireAdmin(ctx, deps.adminToken);
+    await adminGuard(ctx, deps);
     sendJson(res, 200, await deps.reports.summary(reportFilter(ctx.query)));
   });
 
   r.get('/admin/orders', async (ctx, res) => {
-    requireAdmin(ctx, deps.adminToken);
+    await adminGuard(ctx, deps);
     const limit = intParam(ctx.query, 'limit', 50, 500);
     const offset = intParam(ctx.query, 'offset', 0, Number.MAX_SAFE_INTEGER);
     const { total, items } = await deps.reports.listOrders(reportFilter(ctx.query), { limit, offset });
@@ -256,7 +272,7 @@ export function buildRouter(deps: ApiDeps): Router {
   });
 
   r.get('/admin/refunds', async (ctx, res) => {
-    requireAdmin(ctx, deps.adminToken);
+    await adminGuard(ctx, deps);
     const limit = intParam(ctx.query, 'limit', 50, 500);
     const offset = intParam(ctx.query, 'offset', 0, Number.MAX_SAFE_INTEGER);
     const { total, items } = await deps.reports.listRefunds({ limit, offset });
@@ -265,10 +281,33 @@ export function buildRouter(deps: ApiDeps): Router {
 
   // Trigger an expiry pass (reminders + deactivation); usually driven by cron.
   r.post('/admin/expiry/run', async (ctx, res) => {
-    requireAdmin(ctx, deps.adminToken);
+    await adminGuard(ctx, deps);
     const reminders = await deps.expiry.sendExpiryReminders();
     const deactivated = await deps.expiry.deactivateExpired();
     sendJson(res, 200, { reminders, deactivated });
+  });
+
+  // Run a financial-consistency reconciliation pass (optionally healing).
+  r.post('/admin/reconciliation', async (ctx, res) => {
+    await adminGuard(ctx, deps);
+    const report = await deps.reconciliation.run({ heal: ctx.query.get('heal') === 'true' });
+    sendJson(res, 200, report);
+  });
+
+  // Query the audit log.
+  r.get('/admin/audit', async (ctx, res) => {
+    await adminGuard(ctx, deps);
+    const q = ctx.query;
+    const result = await deps.audit.query({
+      action: q.get('action') ?? undefined,
+      actor: q.get('actor') ?? undefined,
+      subjectId: q.get('subjectId') ?? undefined,
+      from: q.get('from') ? intParam(q, 'from', 0, Number.MAX_SAFE_INTEGER) : undefined,
+      to: q.get('to') ? intParam(q, 'to', 0, Number.MAX_SAFE_INTEGER) : undefined,
+      limit: intParam(q, 'limit', 50, 500),
+      offset: intParam(q, 'offset', 0, Number.MAX_SAFE_INTEGER),
+    });
+    sendJson(res, 200, result);
   });
 
   return r;

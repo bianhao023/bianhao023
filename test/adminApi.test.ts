@@ -91,3 +91,37 @@ test('admin order filter validates enum params', async () => {
     server.close();
   }
 });
+
+test('business events are recorded and queryable via /admin/audit', async () => {
+  const { base, server } = await start(TOKEN);
+  try {
+    await seedPaidOrder(base); // records order.created + order.fulfilled
+    const auth = { Authorization: `Bearer ${TOKEN}` };
+
+    const all = await getJson(await fetch(`${base}/admin/audit`, { headers: auth }));
+    const actions = all.items.map((e: any) => e.action);
+    assert.ok(actions.includes('order.created'));
+    assert.ok(actions.includes('order.fulfilled'));
+    assert.ok(actions.includes('admin.access')); // this very request
+
+    const filtered = await getJson(await fetch(`${base}/admin/audit?action=order.fulfilled`, { headers: auth }));
+    assert.ok(filtered.total >= 1);
+    assert.ok(filtered.items.every((e: any) => e.action === 'order.fulfilled'));
+  } finally {
+    server.close();
+  }
+});
+
+test('/admin/reconciliation returns a clean report for healthy data', async () => {
+  const { base, server } = await start(TOKEN);
+  try {
+    await seedPaidOrder(base);
+    const auth = { Authorization: `Bearer ${TOKEN}` };
+    const report = await getJson(await fetch(`${base}/admin/reconciliation`, { method: 'POST', headers: auth }));
+    assert.equal(report.checkedOrders, 1);
+    assert.deepEqual(report.discrepancies, []);
+    assert.equal(typeof report.healedStaleOrders, 'number');
+  } finally {
+    server.close();
+  }
+});

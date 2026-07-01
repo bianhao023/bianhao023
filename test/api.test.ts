@@ -195,6 +195,25 @@ test('rate limiting returns 429 with Retry-After after the limit', async () => {
   }
 });
 
+test('serves the OpenAPI spec and Swagger UI docs', async () => {
+  const { base, server } = await startServer();
+  try {
+    const spec = await getJson(await fetch(`${base}/openapi.json`));
+    assert.equal(spec.openapi, '3.0.3');
+    assert.ok(spec.paths['/api/orders']);
+    assert.ok(spec.paths['/api/users/register']);
+
+    const docs = await fetch(`${base}/docs`);
+    assert.equal(docs.status, 200);
+    assert.match(docs.headers.get('content-type') ?? '', /text\/html/);
+    const html = await docs.text();
+    assert.match(html, /swagger-ui/);
+    assert.match(html, /\/openapi\.json/);
+  } finally {
+    server.close();
+  }
+});
+
 test('idempotency-key header dedupes order creation over HTTP', async () => {
   const { base, server } = await startServer();
   try {
