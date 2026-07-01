@@ -5,7 +5,7 @@ A commercial-grade payment backend for a VPN service, supporting **WeChat Pay**,
 dependencies** (only Node.js ≥ 20 built-ins: `crypto`, `http`, `fetch`), which
 keeps it auditable, easy to deploy, and free of payment-SDK supply-chain risk.
 
-> Status: builds clean (`tsc`, strict mode) and passes **222 automated tests**
+> Status: builds clean (`tsc`, strict mode) and passes **233 automated tests**
 > covering signing, callbacks, the order state machine, idempotency & dedupe
 > retention, concurrency, amount validation, USDT reconciliation, refunds
 > (full/partial/manual and asynchronous PROCESSING→final settlement), subscription
@@ -108,6 +108,7 @@ run with any subset of WeChat / Alipay / USDT configured.
 | `POST /api/notify/alipay` | Alipay async notification webhook |
 | `POST /internal/usdt/reconcile` | Trigger a USDT reconciliation pass (e.g. from cron) |
 | `GET /admin/reports/summary` | Reconciliation summary (filters: `from`,`to`,`method`,`status`) 🔒 |
+| `GET /admin/reports/orders-summary` | Order aggregates via SQL GROUP BY pushdown (no refund attribution) 🔒 |
 | `GET /admin/orders` | Paginated orders (`limit`,`offset`,filters) 🔒 |
 | `GET /admin/refunds` | Paginated refunds (`limit`,`offset`) 🔒 |
 | `POST /admin/expiry/run` | Run subscription reminders + deactivation pass 🔒 |

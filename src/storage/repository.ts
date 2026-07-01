@@ -1,5 +1,5 @@
 import { Order, OrderStatus, Subscription } from '../domain/types';
-import { Refund } from '../domain/refund';
+import { Refund, RefundStatus } from '../domain/refund';
 import { User } from '../domain/user';
 
 /** Filter for paginated order queries (all fields optional / AND-combined). */
@@ -10,6 +10,21 @@ export interface OrderQueryFilter {
   from?: number;
   /** Exclusive upper bound on createdAt (epoch millis). */
   to?: number;
+}
+
+/** Filter for paginated refund queries. */
+export interface RefundQueryFilter {
+  status?: RefundStatus;
+  from?: number;
+  to?: number;
+}
+
+/** Aggregated order metrics, pushed down to the store (SQL GROUP BY). */
+export interface OrderSummary {
+  ordersTotal: number;
+  byStatus: Record<string, number>;
+  /** Paid orders (paidAt set and status PAID/FULFILLED/REFUNDED) grouped by method+currency. */
+  paid: Array<{ method: string; currency: string; paidCount: number; grossMinor: number }>;
 }
 
 export interface OrderRepository {
@@ -25,6 +40,8 @@ export interface OrderRepository {
    * pagination down (SQL WHERE + LIMIT/OFFSET) instead of loading every row.
    */
   query(filter: OrderQueryFilter, limit: number, offset: number): Promise<{ total: number; items: Order[] }>;
+  /** Aggregated metrics (counts + paid gross), pushed down as SQL GROUP BY. */
+  summarize(filter: OrderQueryFilter): Promise<OrderSummary>;
   /** All orders (test/admin helper; avoid on large datasets). */
   all(): Promise<Order[]>;
 }
@@ -35,7 +52,9 @@ export interface RefundRepository {
   findByOutRefundNo(outRefundNo: string): Promise<Refund | undefined>;
   findByOrder(orderId: string): Promise<Refund[]>;
   update(refund: Refund): Promise<Refund>;
-  /** All refunds (reporting/admin helper). */
+  /** Paginated, filtered query (newest-first), pushed down to the store. */
+  query(filter: RefundQueryFilter, limit: number, offset: number): Promise<{ total: number; items: Refund[] }>;
+  /** All refunds (reporting/admin helper; avoid on large datasets). */
   all(): Promise<Refund[]>;
 }
 

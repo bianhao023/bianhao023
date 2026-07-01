@@ -123,8 +123,36 @@ export class ReportService {
     );
   }
 
-  async listRefunds(page: Page): Promise<{ total: number; items: Refund[] }> {
-    const all = (await this.refunds.all()).sort((a, b) => b.createdAt - a.createdAt);
-    return { total: all.length, items: all.slice(page.offset, page.offset + page.limit) };
+  async listRefunds(page: Page, filter: { status?: RefundStatus; from?: number; to?: number } = {}): Promise<{ total: number; items: Refund[] }> {
+    // Push filtering + pagination into the store.
+    return this.refunds.query(filter, page.limit, page.offset);
+  }
+
+  /**
+   * Order-side aggregation pushed down to the store (SQL GROUP BY). Unlike
+   * `summary`, this does NOT attribute refunds — it is the scalable big-table
+   * roll-up (counts + paid gross by status/method/currency).
+   */
+  async orderSummary(filter: ReportFilter = {}): Promise<Record<string, unknown>> {
+    const s = await this.orders.summarize(filter);
+    const byCurrency = new Map<string, { currency: string; paidCount: number; grossMinor: number }>();
+    for (const row of s.paid) {
+      const c = byCurrency.get(row.currency) ?? { currency: row.currency, paidCount: 0, grossMinor: 0 };
+      c.paidCount += row.paidCount;
+      c.grossMinor += row.grossMinor;
+      byCurrency.set(row.currency, c);
+    }
+    return {
+      ordersTotal: s.ordersTotal,
+      byStatus: s.byStatus,
+      currencies: [...byCurrency.values()].map((c) => ({
+        ...c,
+        grossDisplay: fromMinorUnits(c.grossMinor, c.currency as Currency),
+      })),
+      byMethod: s.paid.map((r) => ({
+        ...r,
+        grossDisplay: fromMinorUnits(r.grossMinor, r.currency as Currency),
+      })),
+    };
   }
 }

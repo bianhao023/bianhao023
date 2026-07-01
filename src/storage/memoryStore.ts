@@ -4,12 +4,15 @@ import { User } from '../domain/user';
 import {
   OrderRepository,
   OrderQueryFilter,
+  OrderSummary,
   RefundRepository,
+  RefundQueryFilter,
   SubscriptionRepository,
   UserRepository,
   ProcessedEventStore,
   Locker,
 } from './repository';
+import { OrderStatus } from '../domain/types';
 
 /**
  * In-memory implementations of the storage interfaces. They are intentionally
@@ -75,6 +78,30 @@ export class MemoryOrderRepository implements OrderRepository {
       })
       .sort((a, b) => b.createdAt - a.createdAt);
     return { total: matched.length, items: matched.slice(offset, offset + limit).map(clone) };
+  }
+
+  async summarize(filter: OrderQueryFilter): Promise<OrderSummary> {
+    const paidStatuses = new Set<OrderStatus>([OrderStatus.PAID, OrderStatus.FULFILLED, OrderStatus.REFUNDED]);
+    const matched = [...this.byId.values()].filter((o) => {
+      if (filter.status && o.status !== filter.status) return false;
+      if (filter.method && o.method !== filter.method) return false;
+      if (filter.from !== undefined && o.createdAt < filter.from) return false;
+      if (filter.to !== undefined && o.createdAt >= filter.to) return false;
+      return true;
+    });
+    const byStatus: Record<string, number> = {};
+    const paidMap = new Map<string, { method: string; currency: string; paidCount: number; grossMinor: number }>();
+    for (const o of matched) {
+      byStatus[o.status] = (byStatus[o.status] ?? 0) + 1;
+      if (o.paidAt !== undefined && paidStatuses.has(o.status)) {
+        const key = `${o.method}|${o.currency}`;
+        const row = paidMap.get(key) ?? { method: o.method, currency: o.currency, paidCount: 0, grossMinor: 0 };
+        row.paidCount++;
+        row.grossMinor += o.amount;
+        paidMap.set(key, row);
+      }
+    }
+    return { ordersTotal: matched.length, byStatus, paid: [...paidMap.values()] };
   }
 
   async all(): Promise<Order[]> {
@@ -153,6 +180,18 @@ export class MemoryRefundRepository implements RefundRepository {
   async update(refund: Refund): Promise<Refund> {
     this.byId.set(refund.id, clone(refund));
     return clone(refund);
+  }
+
+  async query(filter: RefundQueryFilter, limit: number, offset: number): Promise<{ total: number; items: Refund[] }> {
+    const matched = [...this.byId.values()]
+      .filter((r) => {
+        if (filter.status && r.status !== filter.status) return false;
+        if (filter.from !== undefined && r.createdAt < filter.from) return false;
+        if (filter.to !== undefined && r.createdAt >= filter.to) return false;
+        return true;
+      })
+      .sort((a, b) => b.createdAt - a.createdAt);
+    return { total: matched.length, items: matched.slice(offset, offset + limit).map(clone) };
   }
 
   async all(): Promise<Refund[]> {

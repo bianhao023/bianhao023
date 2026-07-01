@@ -1,4 +1,5 @@
 import { Order, OrderStatus, PaymentMethod, ALL_METHODS } from '../domain/types';
+import { RefundStatus } from '../domain/refund';
 import { ValidationError, NotFoundError, AppError } from '../domain/errors';
 import { fromMinorUnits } from '../core/money';
 import { safeEqual } from '../utils/crypto';
@@ -109,6 +110,19 @@ function intParam(q: URLSearchParams, name: string, def: number, max: number): n
   const n = Number(raw);
   if (!Number.isInteger(n) || n < 0) throw new ValidationError(`invalid ${name}`);
   return Math.min(n, max);
+}
+
+/** Build a refund filter from query params (validating the status enum). */
+function refundFilter(q: URLSearchParams): { status?: RefundStatus; from?: number; to?: number } {
+  const f: { status?: RefundStatus; from?: number; to?: number } = {};
+  const status = q.get('status');
+  if (status) {
+    if (!Object.values(RefundStatus).includes(status as RefundStatus)) throw new ValidationError(`invalid status: ${status}`);
+    f.status = status as RefundStatus;
+  }
+  if (q.get('from')) f.from = intParam(q, 'from', 0, Number.MAX_SAFE_INTEGER);
+  if (q.get('to')) f.to = intParam(q, 'to', 0, Number.MAX_SAFE_INTEGER);
+  return f;
 }
 
 /** Build a report filter from query params (validating enums). */
@@ -307,6 +321,12 @@ export function buildRouter(deps: ApiDeps): Router {
     sendJson(res, 200, await deps.reports.summary(reportFilter(ctx.query)));
   });
 
+  // Scalable order-side aggregation (SQL GROUP BY pushdown; no refund attribution).
+  r.get('/admin/reports/orders-summary', async (ctx, res) => {
+    await adminGuard(ctx, deps);
+    sendJson(res, 200, await deps.reports.orderSummary(reportFilter(ctx.query)));
+  });
+
   r.get('/admin/orders', async (ctx, res) => {
     await adminGuard(ctx, deps);
     const limit = intParam(ctx.query, 'limit', 50, 500);
@@ -319,7 +339,7 @@ export function buildRouter(deps: ApiDeps): Router {
     await adminGuard(ctx, deps);
     const limit = intParam(ctx.query, 'limit', 50, 500);
     const offset = intParam(ctx.query, 'offset', 0, Number.MAX_SAFE_INTEGER);
-    const { total, items } = await deps.reports.listRefunds({ limit, offset });
+    const { total, items } = await deps.reports.listRefunds({ limit, offset }, refundFilter(ctx.query));
     sendJson(res, 200, { total, limit, offset, items });
   });
 

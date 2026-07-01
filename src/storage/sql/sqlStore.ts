@@ -3,7 +3,9 @@ import { Refund, RefundStatus } from '../../domain/refund';
 import {
   OrderRepository,
   OrderQueryFilter,
+  OrderSummary,
   RefundRepository,
+  RefundQueryFilter,
   SubscriptionRepository,
   ProcessedEventStore,
 } from '../repository';
@@ -157,6 +159,46 @@ export class SqlOrderRepository implements OrderRepository {
     return { total, items: listRes.rows.map(rowToOrder) };
   }
 
+  async summarize(filter: OrderQueryFilter): Promise<OrderSummary> {
+    const clauses: string[] = [];
+    const params: unknown[] = [];
+    const add = (sql: string, value: unknown) => {
+      params.push(value);
+      clauses.push(sql.replace('?', `$${params.length}`));
+    };
+    if (filter.status) add('status = ?', filter.status);
+    if (filter.method) add('method = ?', filter.method);
+    if (filter.from !== undefined) add('created_at >= ?', filter.from);
+    if (filter.to !== undefined) add('created_at < ?', filter.to);
+    const where = clauses.length ? ` WHERE ${clauses.join(' AND ')}` : '';
+
+    const totalRes = await this.db.query(`SELECT COUNT(*) AS total FROM orders${where}`, params);
+    const ordersTotal = Number(totalRes.rows[0]?.total ?? 0);
+
+    const statusRes = await this.db.query(
+      `SELECT status, COUNT(*) AS c FROM orders${where} GROUP BY status`,
+      params,
+    );
+    const byStatus: Record<string, number> = {};
+    for (const r of statusRes.rows) byStatus[str(r.status)] = num(r.c);
+
+    // Paid = paidAt present and a settled status; grouped by method + currency.
+    const paidStatuses = `('${OrderStatus.PAID}','${OrderStatus.FULFILLED}','${OrderStatus.REFUNDED}')`;
+    const paidWhere = `${where ? where + ' AND' : ' WHERE'} paid_at IS NOT NULL AND status IN ${paidStatuses}`;
+    const paidRes = await this.db.query(
+      `SELECT method, currency, COUNT(*) AS c, COALESCE(SUM(amount),0) AS g FROM orders${paidWhere} GROUP BY method, currency`,
+      params,
+    );
+    const paid = paidRes.rows.map((r) => ({
+      method: str(r.method),
+      currency: str(r.currency),
+      paidCount: num(r.c),
+      grossMinor: num(r.g),
+    }));
+
+    return { ordersTotal, byStatus, paid };
+  }
+
   async all(): Promise<Order[]> {
     const res = await this.db.query('SELECT * FROM orders', []);
     return res.rows.map(rowToOrder);
@@ -195,6 +237,29 @@ export class SqlRefundRepository implements RefundRepository {
       [rf.id, rf.status, rf.providerRefundId ?? null, rf.rawStatus, rf.updatedAt],
     );
     return rf;
+  }
+
+  async query(filter: RefundQueryFilter, limit: number, offset: number): Promise<{ total: number; items: Refund[] }> {
+    const clauses: string[] = [];
+    const params: unknown[] = [];
+    const add = (sql: string, value: unknown) => {
+      params.push(value);
+      clauses.push(sql.replace('?', `$${params.length}`));
+    };
+    if (filter.status) add('status = ?', filter.status);
+    if (filter.from !== undefined) add('created_at >= ?', filter.from);
+    if (filter.to !== undefined) add('created_at < ?', filter.to);
+    const where = clauses.length ? ` WHERE ${clauses.join(' AND ')}` : '';
+
+    const countRes = await this.db.query(`SELECT COUNT(*) AS total FROM refunds${where}`, params);
+    const total = Number(countRes.rows[0]?.total ?? 0);
+
+    const pageParams = [...params, limit, offset];
+    const listRes = await this.db.query(
+      `SELECT * FROM refunds${where} ORDER BY created_at DESC LIMIT $${pageParams.length - 1} OFFSET $${pageParams.length}`,
+      pageParams,
+    );
+    return { total, items: listRes.rows.map(rowToRefund) };
   }
 
   async all(): Promise<Refund[]> {

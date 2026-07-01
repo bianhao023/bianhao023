@@ -112,6 +112,33 @@ test('business events are recorded and queryable via /admin/audit', async () => 
   }
 });
 
+test('orders-summary endpoint returns pushed-down aggregates', async () => {
+  const { base, server } = await start(TOKEN);
+  try {
+    await seedPaidOrder(base);
+    const auth = { Authorization: `Bearer ${TOKEN}` };
+    const s = await getJson(await fetch(`${base}/admin/reports/orders-summary`, { headers: auth }));
+    assert.equal(s.ordersTotal, 1);
+    assert.equal(s.byStatus.FULFILLED, 1);
+    assert.equal(s.currencies.find((c: any) => c.currency === 'CNY').grossMinor, 1500);
+    assert.equal((await fetch(`${base}/admin/reports/orders-summary`)).status, 401);
+  } finally {
+    server.close();
+  }
+});
+
+test('refund listing accepts a status filter and validates it', async () => {
+  const { base, server } = await start(TOKEN);
+  try {
+    const auth = { Authorization: `Bearer ${TOKEN}` };
+    const ok = await getJson(await fetch(`${base}/admin/refunds?status=SUCCESS`, { headers: auth }));
+    assert.equal(typeof ok.total, 'number');
+    assert.equal((await fetch(`${base}/admin/refunds?status=BOGUS`, { headers: auth })).status, 400);
+  } finally {
+    server.close();
+  }
+});
+
 test('CSV exports return text/csv with headers and rows', async () => {
   const { base, server } = await start(TOKEN);
   try {
