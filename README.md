@@ -5,11 +5,12 @@ A commercial-grade payment backend for a VPN service, supporting **WeChat Pay**,
 dependencies** (only Node.js ≥ 20 built-ins: `crypto`, `http`, `fetch`), which
 keeps it auditable, easy to deploy, and free of payment-SDK supply-chain risk.
 
-> Status: builds clean (`tsc`, strict mode) and passes **66 automated tests**
+> Status: builds clean (`tsc`, strict mode) and passes **78 automated tests**
 > covering signing, callbacks, the order state machine, idempotency, concurrency,
 > amount validation, USDT reconciliation, refunds (full/partial/manual and
-> asynchronous PROCESSING→final settlement), the SQL row mappers, and the HTTP
-> API end-to-end.
+> asynchronous PROCESSING→final settlement), subscription expiry & notifications,
+> admin reporting/reconciliation, the SQL row mappers, and the HTTP API
+> end-to-end.
 
 ## Why one coherent codebase
 
@@ -93,6 +94,13 @@ run with any subset of WeChat / Alipay / USDT configured.
 | `POST /api/notify/wechat/refund` | WeChat Pay v3 async refund-result webhook |
 | `POST /api/notify/alipay` | Alipay async notification webhook |
 | `POST /internal/usdt/reconcile` | Trigger a USDT reconciliation pass (e.g. from cron) |
+| `GET /admin/reports/summary` | Reconciliation summary (filters: `from`,`to`,`method`,`status`) 🔒 |
+| `GET /admin/orders` | Paginated orders (`limit`,`offset`,filters) 🔒 |
+| `GET /admin/refunds` | Paginated refunds (`limit`,`offset`) 🔒 |
+| `POST /admin/expiry/run` | Run subscription reminders + deactivation pass 🔒 |
+
+🔒 = requires `Authorization: Bearer $ADMIN_TOKEN`. Admin endpoints are disabled
+(HTTP 403) until `ADMIN_TOKEN` is set.
 
 ### Example: create an order
 
@@ -150,6 +158,40 @@ curl -X POST http://localhost:3000/api/orders/<id>/refund \
   -H 'Content-Type: application/json' \
   -d '{"amount":500,"reason":"partial refund","outRefundNo":"RF-001"}'
 ```
+
+## Reconciliation & reporting
+
+Admin endpoints (bearer-token protected) provide reconciliation data:
+
+- `GET /admin/reports/summary` returns order counts by status, and **per-currency**
+  gross revenue, settled refunds and net revenue (CNY and USDT are never summed
+  together), plus a per-method breakdown. Supports `from`/`to`/`method`/`status`
+  filters.
+- `GET /admin/orders` and `GET /admin/refunds` return newest-first paginated
+  listings (`limit`, `offset`).
+
+```bash
+curl -H "Authorization: Bearer $ADMIN_TOKEN" \
+  "http://localhost:3000/admin/reports/summary?from=1735689600000&method=wechat"
+```
+
+## Subscription expiry & notifications
+
+A background `ExpiryWatcher` (or the cron-friendly `POST /admin/expiry/run`):
+
+- sends a **one-time renewal reminder** to users whose subscription expires
+  within `EXPIRY_REMINDER_DAYS` (reset on renewal so each period reminds once);
+- **deactivates** subscriptions once expired and emits a notification.
+
+Delivery goes through the `Notifier` interface (`src/notifications/notifier.ts`).
+The default `LoggerNotifier` just logs; swap in an email/SMS/push/webhook
+implementation in production — no other code changes required.
+
+## Continuous integration
+
+`.github/workflows/ci.yml` runs on every push and PR: `npm ci`, typecheck,
+build, and the full test suite on Node 20 and 22, followed by a Docker image
+build. Keep it green before merging.
 
 ## Deployment (Docker)
 

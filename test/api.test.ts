@@ -16,7 +16,7 @@ async function getJson(res: Response): Promise<any> {
 }
 
 function startServer(): Promise<{ base: string; server: Server; wechat: FakeProvider }> {
-  const config: AppConfig = { port: 0, orderTtlMinutes: 15, enabledMethods: [] };
+  const config: AppConfig = { port: 0, orderTtlMinutes: 15, enabledMethods: [], expiryReminderDays: 3 };
   const wechat = new FakeProvider('wechat');
   const providers = new Map<PaymentMethod, PaymentProvider>([['wechat', wechat]]);
   const container = buildContainer(config, { providers });

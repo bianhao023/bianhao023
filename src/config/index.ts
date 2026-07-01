@@ -50,6 +50,10 @@ export interface AppConfig {
   /** Minutes a pending order stays payable before EXPIRED. */
   orderTtlMinutes: number;
   enabledMethods: PaymentMethod[];
+  /** Bearer token guarding the /admin endpoints. When unset, admin is disabled. */
+  adminToken?: string;
+  /** Days before expiry to send a renewal reminder. */
+  expiryReminderDays: number;
   wechat?: WechatConfig;
   alipay?: AlipayConfig;
   usdt?: UsdtConfig;
@@ -114,6 +118,8 @@ export function loadConfig(): AppConfig {
     port: Number(env('PORT', '3000')),
     orderTtlMinutes: Number(env('ORDER_TTL_MINUTES', '15')),
     enabledMethods: enabled,
+    adminToken: env('ADMIN_TOKEN') || undefined,
+    expiryReminderDays: Number(env('EXPIRY_REMINDER_DAYS', '3')),
     wechat,
     alipay,
     usdt,

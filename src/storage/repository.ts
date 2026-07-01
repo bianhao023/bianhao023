@@ -19,12 +19,16 @@ export interface RefundRepository {
   findByOutRefundNo(outRefundNo: string): Promise<Refund | undefined>;
   findByOrder(orderId: string): Promise<Refund[]>;
   update(refund: Refund): Promise<Refund>;
+  /** All refunds (reporting/admin helper). */
+  all(): Promise<Refund[]>;
 }
 
 export interface SubscriptionRepository {
   findActiveByUser(userId: string): Promise<Subscription | undefined>;
   create(sub: Subscription): Promise<Subscription>;
   update(sub: Subscription): Promise<Subscription>;
+  /** All currently-active subscriptions (expiry processing/reporting). */
+  listActive(): Promise<Subscription[]>;
 }
 
 /**

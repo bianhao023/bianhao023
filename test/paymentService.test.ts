@@ -10,7 +10,7 @@ import { SignatureError } from '../src/domain/errors';
 import { FakeProvider, FakeChainClient, callbackBody } from './_helpers';
 
 function baseConfig(): AppConfig {
-  return { port: 0, orderTtlMinutes: 15, enabledMethods: [] };
+  return { port: 0, orderTtlMinutes: 15, enabledMethods: [], expiryReminderDays: 3 };
 }
 
 interface Harness {

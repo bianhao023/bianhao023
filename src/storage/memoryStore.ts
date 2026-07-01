@@ -97,6 +97,10 @@ export class MemoryRefundRepository implements RefundRepository {
     this.byId.set(refund.id, clone(refund));
     return clone(refund);
   }
+
+  async all(): Promise<Refund[]> {
+    return [...this.byId.values()].map(clone);
+  }
 }
 
 export class MemorySubscriptionRepository implements SubscriptionRepository {
@@ -119,7 +123,12 @@ export class MemorySubscriptionRepository implements SubscriptionRepository {
   async update(sub: Subscription): Promise<Subscription> {
     this.byId.set(sub.id, clone(sub));
     if (sub.active) this.activeByUser.set(sub.userId, sub.id);
+    else if (this.activeByUser.get(sub.userId) === sub.id) this.activeByUser.delete(sub.userId);
     return clone(sub);
+  }
+
+  async listActive(): Promise<Subscription[]> {
+    return [...this.byId.values()].filter((s) => s.active).map(clone);
   }
 }
 

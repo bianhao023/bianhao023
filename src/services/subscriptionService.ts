@@ -44,6 +44,8 @@ export class SubscriptionService {
         deviceLimit: plan.deviceLimit,
         orderIds: [...existing.orderIds, order.id],
         active: true,
+        // Renewed: allow a fresh reminder for the new period.
+        expiryNotifiedAt: undefined,
         updatedAt: now,
       };
       await this.subs.update(subscription);

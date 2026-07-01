@@ -22,7 +22,11 @@ import { PlanCatalog } from './services/plans';
 import { SubscriptionService } from './services/subscriptionService';
 import { PaymentService } from './services/paymentService';
 import { RefundService } from './services/refundService';
+import { ReportService } from './services/reportService';
+import { ExpiryService } from './services/expiryService';
+import { ExpiryWatcher } from './services/expiryWatcher';
 import { UsdtWatcher } from './services/usdtWatcher';
+import { LoggerNotifier, Notifier } from './notifications/notifier';
 
 /** Overrides used by tests to inject fakes / fixed clocks. */
 export interface ContainerOverrides {
@@ -34,6 +38,7 @@ export interface ContainerOverrides {
   processedEvents?: ProcessedEventStore;
   locker?: Locker;
   plans?: PlanCatalog;
+  notifier?: Notifier;
   now?: () => number;
   /** Force-enable/replace providers regardless of config (test convenience). */
   providers?: Map<PaymentMethod, PaymentProvider>;
@@ -44,6 +49,9 @@ export interface Container {
   orders: OrderRepository;
   payments: PaymentService;
   refunds: RefundService;
+  reports: ReportService;
+  expiry: ExpiryService;
+  expiryWatcher: ExpiryWatcher;
   plans: PlanCatalog;
   usdtWatcher?: UsdtWatcher;
   enabledMethods: PaymentMethod[];
@@ -99,11 +107,22 @@ export function buildContainer(config: AppConfig, overrides: ContainerOverrides 
     now,
   });
 
+  const reports = new ReportService(orders, refundsRepo);
+
+  const notifier = overrides.notifier ?? new LoggerNotifier();
+  const expiry = new ExpiryService({
+    subscriptions: subscriptionsRepo,
+    notifier,
+    reminderWindowMs: config.expiryReminderDays * 24 * 60 * 60 * 1000,
+    now,
+  });
+  const expiryWatcher = new ExpiryWatcher(expiry);
+
   if (providers.has('usdt')) {
     usdtWatcher = new UsdtWatcher(orders, payments);
   }
 
   const enabledMethods = [...providers.keys()];
 
-  return { config, orders, payments, refunds, plans, usdtWatcher, enabledMethods };
+  return { config, orders, payments, refunds, reports, expiry, expiryWatcher, plans, usdtWatcher, enabledMethods };
 }

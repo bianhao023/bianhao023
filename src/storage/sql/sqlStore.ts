@@ -77,6 +77,7 @@ export function rowToSubscription(r: Record<string, unknown>): Subscription {
     deviceLimit: num(r.device_limit),
     active: Boolean(r.active),
     orderIds: (typeof r.order_ids === 'string' ? JSON.parse(r.order_ids) : (r.order_ids ?? [])) as string[],
+    expiryNotifiedAt: optNum(r.expiry_notified_at),
     createdAt: num(r.created_at),
     updatedAt: num(r.updated_at),
   };
@@ -170,6 +171,11 @@ export class SqlRefundRepository implements RefundRepository {
     );
     return rf;
   }
+
+  async all(): Promise<Refund[]> {
+    const res = await this.db.query('SELECT * FROM refunds', []);
+    return res.rows.map(rowToRefund);
+  }
 }
 
 export class SqlSubscriptionRepository implements SubscriptionRepository {
@@ -183,10 +189,10 @@ export class SqlSubscriptionRepository implements SubscriptionRepository {
   async create(s: Subscription): Promise<Subscription> {
     await this.db.query(
       `INSERT INTO subscriptions
-        (id, user_id, plan_id, starts_at, expires_at, traffic_gb, device_limit, active, order_ids, created_at, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+        (id, user_id, plan_id, starts_at, expires_at, traffic_gb, device_limit, active, order_ids, expiry_notified_at, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
       [s.id, s.userId, s.planId, s.startsAt, s.expiresAt, s.trafficGb, s.deviceLimit, s.active,
-        JSON.stringify(s.orderIds), s.createdAt, s.updatedAt],
+        JSON.stringify(s.orderIds), s.expiryNotifiedAt ?? null, s.createdAt, s.updatedAt],
     );
     return s;
   }
@@ -194,11 +200,16 @@ export class SqlSubscriptionRepository implements SubscriptionRepository {
   async update(s: Subscription): Promise<Subscription> {
     await this.db.query(
       `UPDATE subscriptions SET plan_id=$2, starts_at=$3, expires_at=$4, traffic_gb=$5,
-         device_limit=$6, active=$7, order_ids=$8, updated_at=$9 WHERE id=$1`,
+         device_limit=$6, active=$7, order_ids=$8, expiry_notified_at=$9, updated_at=$10 WHERE id=$1`,
       [s.id, s.planId, s.startsAt, s.expiresAt, s.trafficGb, s.deviceLimit, s.active,
-        JSON.stringify(s.orderIds), s.updatedAt],
+        JSON.stringify(s.orderIds), s.expiryNotifiedAt ?? null, s.updatedAt],
     );
     return s;
+  }
+
+  async listActive(): Promise<Subscription[]> {
+    const res = await this.db.query('SELECT * FROM subscriptions WHERE active = true', []);
+    return res.rows.map(rowToSubscription);
   }
 }
 

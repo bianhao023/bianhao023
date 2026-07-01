@@ -1,8 +1,11 @@
-import { Order, PaymentMethod, ALL_METHODS } from '../domain/types';
-import { ValidationError, NotFoundError } from '../domain/errors';
+import { Order, OrderStatus, PaymentMethod, ALL_METHODS } from '../domain/types';
+import { ValidationError, NotFoundError, AppError } from '../domain/errors';
 import { fromMinorUnits } from '../core/money';
+import { safeEqual } from '../utils/crypto';
 import { PaymentService } from '../services/paymentService';
 import { RefundService } from '../services/refundService';
+import { ReportService, ReportFilter } from '../services/reportService';
+import { ExpiryService } from '../services/expiryService';
 import { PlanCatalog } from '../services/plans';
 import { UsdtWatcher } from '../services/usdtWatcher';
 import { parseJsonBody, Router, sendJson, sendRaw, ReqContext } from './http';
@@ -10,8 +13,12 @@ import { parseJsonBody, Router, sendJson, sendRaw, ReqContext } from './http';
 export interface ApiDeps {
   payments: PaymentService;
   refunds: RefundService;
+  reports: ReportService;
+  expiry: ExpiryService;
   plans: PlanCatalog;
   enabledMethods: PaymentMethod[];
+  /** Bearer token guarding /admin. Undefined disables admin endpoints. */
+  adminToken?: string;
   usdtWatcher?: UsdtWatcher;
 }
 
@@ -41,6 +48,48 @@ function requireString(body: Record<string, unknown>, key: string): string {
     throw new ValidationError(`missing or invalid field: ${key}`);
   }
   return v.trim();
+}
+
+class AuthError extends AppError {
+  constructor(message: string, status = 401) {
+    super('UNAUTHORIZED', message, status);
+  }
+}
+
+/** Enforce the admin bearer token (constant-time). Disabled when no token set. */
+function requireAdmin(ctx: ReqContext, adminToken?: string): void {
+  if (!adminToken) throw new AuthError('admin endpoints are disabled (set ADMIN_TOKEN)', 403);
+  const header = ctx.headers['authorization'] ?? '';
+  const prefix = 'Bearer ';
+  const token = header.startsWith(prefix) ? header.slice(prefix.length) : '';
+  if (!safeEqual(token, adminToken)) throw new AuthError('invalid admin token');
+}
+
+/** Parse a non-negative integer query param with a default and cap. */
+function intParam(q: URLSearchParams, name: string, def: number, max: number): number {
+  const raw = q.get(name);
+  if (raw === null) return def;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 0) throw new ValidationError(`invalid ${name}`);
+  return Math.min(n, max);
+}
+
+/** Build a report filter from query params (validating enums). */
+function reportFilter(q: URLSearchParams): ReportFilter {
+  const f: ReportFilter = {};
+  if (q.get('from')) f.from = intParam(q, 'from', 0, Number.MAX_SAFE_INTEGER);
+  if (q.get('to')) f.to = intParam(q, 'to', 0, Number.MAX_SAFE_INTEGER);
+  const method = q.get('method');
+  if (method) {
+    if (!ALL_METHODS.includes(method as PaymentMethod)) throw new ValidationError(`invalid method: ${method}`);
+    f.method = method as PaymentMethod;
+  }
+  const status = q.get('status');
+  if (status) {
+    if (!Object.values(OrderStatus).includes(status as OrderStatus)) throw new ValidationError(`invalid status: ${status}`);
+    f.status = status as OrderStatus;
+  }
+  return f;
 }
 
 export function buildRouter(deps: ApiDeps): Router {
@@ -142,6 +191,36 @@ export function buildRouter(deps: ApiDeps): Router {
   r.post('/internal/usdt/reconcile', async (_ctx, res) => {
     const settled = deps.usdtWatcher ? await deps.usdtWatcher.reconcileOnce() : 0;
     sendJson(res, 200, { settled });
+  });
+
+  // ── Admin / reconciliation (bearer-token protected) ──────────────────────
+  r.get('/admin/reports/summary', async (ctx, res) => {
+    requireAdmin(ctx, deps.adminToken);
+    sendJson(res, 200, await deps.reports.summary(reportFilter(ctx.query)));
+  });
+
+  r.get('/admin/orders', async (ctx, res) => {
+    requireAdmin(ctx, deps.adminToken);
+    const limit = intParam(ctx.query, 'limit', 50, 500);
+    const offset = intParam(ctx.query, 'offset', 0, Number.MAX_SAFE_INTEGER);
+    const { total, items } = await deps.reports.listOrders(reportFilter(ctx.query), { limit, offset });
+    sendJson(res, 200, { total, limit, offset, items: items.map(orderView) });
+  });
+
+  r.get('/admin/refunds', async (ctx, res) => {
+    requireAdmin(ctx, deps.adminToken);
+    const limit = intParam(ctx.query, 'limit', 50, 500);
+    const offset = intParam(ctx.query, 'offset', 0, Number.MAX_SAFE_INTEGER);
+    const { total, items } = await deps.reports.listRefunds({ limit, offset });
+    sendJson(res, 200, { total, limit, offset, items });
+  });
+
+  // Trigger an expiry pass (reminders + deactivation); usually driven by cron.
+  r.post('/admin/expiry/run', async (ctx, res) => {
+    requireAdmin(ctx, deps.adminToken);
+    const reminders = await deps.expiry.sendExpiryReminders();
+    const deactivated = await deps.expiry.deactivateExpired();
+    sendJson(res, 200, { reminders, deactivated });
   });
 
   return r;

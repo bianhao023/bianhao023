@@ -47,10 +47,11 @@ CREATE TABLE IF NOT EXISTS subscriptions (
   expires_at    BIGINT NOT NULL,
   traffic_gb    INTEGER NOT NULL,
   device_limit  INTEGER NOT NULL,
-  active        BOOLEAN NOT NULL,
-  order_ids     JSONB NOT NULL DEFAULT '[]'::jsonb,
-  created_at    BIGINT NOT NULL,
-  updated_at    BIGINT NOT NULL
+  active             BOOLEAN NOT NULL,
+  order_ids          JSONB NOT NULL DEFAULT '[]'::jsonb,
+  expiry_notified_at BIGINT,
+  created_at         BIGINT NOT NULL,
+  updated_at         BIGINT NOT NULL
 );
 
 -- One active subscription per user (matches MemorySubscriptionRepository).

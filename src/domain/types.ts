@@ -97,6 +97,8 @@ export interface Subscription {
   active: boolean;
   /** Orders that contributed to this subscription, newest last. */
   orderIds: string[];
+  /** When a pre-expiry reminder was last sent (reset when the sub is renewed). */
+  expiryNotifiedAt?: number;
   createdAt: number;
   updatedAt: number;
 }

@@ -92,7 +92,7 @@ test('Alipay refund surfaces a rejection', async () => {
 // ---- service-level refund ----
 
 function baseConfig(): AppConfig {
-  return { port: 0, orderTtlMinutes: 15, enabledMethods: [] };
+  return { port: 0, orderTtlMinutes: 15, enabledMethods: [], expiryReminderDays: 3 };
 }
 
 async function paidOrderHarness() {
