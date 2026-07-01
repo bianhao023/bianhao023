@@ -60,6 +60,8 @@ export class Router {
   private readonly metrics?: RouterMetrics;
   private readonly rateLimit?: RateLimitOptions;
   private readonly security?: SecurityOptions;
+  /** Route patterns advertised as deprecated -> optional Sunset date (RFC 8594). */
+  private deprecated = new Map<string, string | undefined>();
 
   constructor(opts: RouterOptions = {}) {
     this.metrics = opts.metrics;
@@ -74,6 +76,26 @@ export class Router {
       segments: pattern.split('/').filter(Boolean),
       handler,
     });
+    return this;
+  }
+
+  /**
+   * Register every existing route under `from` (a path prefix) again under
+   * `to`, sharing the handler — e.g. expose `/api/*` also at `/api/v1/*`.
+   * Snapshot the current routes so aliases are not themselves re-aliased.
+   */
+  aliasPrefix(from: string, to: string): this {
+    for (const route of [...this.routes]) {
+      if (route.pattern === from || route.pattern.startsWith(from + '/')) {
+        this.add(route.method, to + route.pattern.slice(from.length), route.handler);
+      }
+    }
+    return this;
+  }
+
+  /** Advertise a route pattern as deprecated (adds Deprecation/Sunset headers). */
+  markDeprecated(pattern: string, sunsetHttpDate?: string): this {
+    this.deprecated.set(pattern.startsWith('/') ? pattern : `/${pattern}`, sunsetHttpDate);
     return this;
   }
 
@@ -191,6 +213,14 @@ export class Router {
       record();
       return;
     }
+
+    // Deprecation advertising (RFC 8594) for sunsetting routes.
+    if (this.deprecated.has(routeLabel)) {
+      res.setHeader('Deprecation', 'true');
+      const sunset = this.deprecated.get(routeLabel);
+      if (sunset) res.setHeader('Sunset', sunset);
+    }
+
     const headers: Record<string, string> = {};
     for (const [k, v] of Object.entries(req.headers)) {
       headers[k.toLowerCase()] = Array.isArray(v) ? v.join(',') : (v ?? '');

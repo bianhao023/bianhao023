@@ -5,7 +5,7 @@ A commercial-grade payment backend for a VPN service, supporting **WeChat Pay**,
 dependencies** (only Node.js ≥ 20 built-ins: `crypto`, `http`, `fetch`), which
 keeps it auditable, easy to deploy, and free of payment-SDK supply-chain risk.
 
-> Status: builds clean (`tsc`, strict mode) and passes **206 automated tests**
+> Status: builds clean (`tsc`, strict mode) and passes **218 automated tests**
 > covering signing, callbacks, the order state machine, idempotency & dedupe
 > retention, concurrency, amount validation, USDT reconciliation, refunds
 > (full/partial/manual and asynchronous PROCESSING→final settlement), subscription
@@ -295,8 +295,20 @@ every endpoint with schemas, tags, and the `bearerAuth` security scheme.
 ### API versioning
 
 The current API is `v1` (see `GET /version`), and every response carries an
-`X-API-Version` header. Breaking changes will ship under a new major version;
-deprecated surfaces will advertise `Deprecation`/`Sunset` headers before removal.
+`X-API-Version` header. Every public `/api/*` route is **also** served under an
+explicit `/api/v1/*` alias (both canonical for this major version). Breaking
+changes will ship under a new prefix; the router's `markDeprecated(pattern,
+sunset)` advertises `Deprecation`/`Sunset` (RFC 8594) headers on sunsetting
+routes.
+
+### Verifying outbound webhooks (merchant side)
+
+Merchants verify our signed webhooks with `verifyWebhookSignature`
+(`src/webhooks/verify.ts`): read the `X-Webhook-Timestamp` and
+`X-Webhook-Signature` headers and the raw body, then
+`verifyWebhookSignature(WEBHOOK_SECRET, timestamp, body, signature)` — it
+recomputes the HMAC (constant-time compare) and rejects stale timestamps
+(replay guard, default ±300s).
 
 ## Reconciliation & reporting
 

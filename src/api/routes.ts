@@ -385,6 +385,10 @@ export function buildRouter(deps: ApiDeps): Router {
     }
   });
 
+  // Expose every public /api/* route also under the explicit /api/v1/* prefix.
+  // (Both are canonical for the current major version; no deprecation yet.)
+  r.aliasPrefix('/api', '/api/v1');
+
   // Query the audit log.
   r.get('/admin/audit', async (ctx, res) => {
     await adminGuard(ctx, deps);

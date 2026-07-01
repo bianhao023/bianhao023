@@ -195,6 +195,25 @@ test('rate limiting returns 429 with Retry-After after the limit', async () => {
   }
 });
 
+test('public routes are also served under the /api/v1 prefix', async () => {
+  const { base, server } = await startServer();
+  try {
+    const v1 = await getJson(await fetch(`${base}/api/v1/plans`));
+    assert.ok(Array.isArray(v1.plans) && v1.plans.length >= 1);
+
+    // The full order flow works under /api/v1 too.
+    const created = await getJson(await fetch(`${base}/api/v1/orders`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: 'u1', planId: 'monthly', method: 'wechat' }),
+    }));
+    assert.equal(created.status, 'PENDING');
+    const got = await getJson(await fetch(`${base}/api/v1/orders/${created.orderId}`));
+    assert.equal(got.orderId, created.orderId);
+  } finally {
+    server.close();
+  }
+});
+
 test('version endpoint and X-API-Version header', async () => {
   const { base, server } = await startServer();
   try {
