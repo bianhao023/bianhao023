@@ -19,6 +19,7 @@ export function createHttpServer(container: Container): Server {
     routerMetrics: container.routerMetrics,
     rateLimit: container.rateLimit,
     usdtWatcher: container.usdtWatcher,
+    webhooks: container.webhooks,
   });
   return createServer((req, res) => router.handle(req, res));
 }

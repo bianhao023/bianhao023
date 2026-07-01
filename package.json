@@ -16,7 +16,8 @@
     "start": "node dist/src/main.js",
     "sandbox:usdt": "node dist/scripts/sandbox-usdt.js",
     "sandbox:alipay": "node dist/scripts/sandbox-alipay.js",
-    "sandbox:wechat": "node dist/scripts/sandbox-wechat.js"
+    "sandbox:wechat": "node dist/scripts/sandbox-wechat.js",
+    "loadtest": "node dist/scripts/loadtest.js"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

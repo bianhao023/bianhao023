@@ -53,6 +53,16 @@ export interface RateLimitConfig {
   windowMs: number;
 }
 
+/** Outbound merchant webhook configuration. */
+export interface WebhookConfig {
+  /** Merchant endpoint that receives signed event notifications. */
+  url: string;
+  /** HMAC-SHA256 secret used to sign payloads. */
+  secret: string;
+  /** Max delivery attempts before a delivery is dead-lettered. */
+  maxAttempts: number;
+}
+
 /** SMTP configuration for outbound billing emails. */
 export interface SmtpConfig {
   host: string;
@@ -79,6 +89,7 @@ export interface AppConfig {
   alipay?: AlipayConfig;
   usdt?: UsdtConfig;
   smtp?: SmtpConfig;
+  webhook?: WebhookConfig;
 }
 
 const CANONICAL_USDT_TRC20 = 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t';
@@ -148,6 +159,15 @@ export function loadConfig(): AppConfig {
     };
   }
 
+  let webhook: WebhookConfig | undefined;
+  if (env('WEBHOOK_URL')) {
+    webhook = {
+      url: env('WEBHOOK_URL'),
+      secret: env('WEBHOOK_SECRET'),
+      maxAttempts: Number(env('WEBHOOK_MAX_ATTEMPTS', '6')),
+    };
+  }
+
   return {
     port: Number(env('PORT', '3000')),
     orderTtlMinutes: Number(env('ORDER_TTL_MINUTES', '15')),
@@ -163,6 +183,7 @@ export function loadConfig(): AppConfig {
     alipay,
     usdt,
     smtp,
+    webhook,
   };
 }
 

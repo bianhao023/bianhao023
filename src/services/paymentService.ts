@@ -22,6 +22,7 @@ import { allocateUniqueAmount } from '../providers/usdt/usdtTron';
 import { SubscriptionService } from './subscriptionService';
 import { PlanCatalog } from './plans';
 import { AuditLog } from '../audit/auditLog';
+import { OutboundEmitter } from '../webhooks/outbound';
 import { newOutTradeNo, uuid } from '../utils/ids';
 import { logger } from '../utils/logger';
 
@@ -47,6 +48,7 @@ export interface PaymentServiceDeps {
   orderTtlMinutes: number;
   usdtUniqueDeltaMax: number;
   audit?: AuditLog;
+  outbound?: OutboundEmitter;
   now?: () => number;
 }
 
@@ -279,6 +281,15 @@ export class PaymentService {
         actor: finalOrder.userId,
         subjectId: finalOrder.id,
         metadata: { providerTxnId: paid.providerTxnId, amount: paid.paidAmount, currency: paid.currency },
+      });
+      await this.deps.outbound?.emit('order.fulfilled', {
+        orderId: finalOrder.id,
+        outTradeNo: finalOrder.outTradeNo,
+        userId: finalOrder.userId,
+        planId: finalOrder.planId,
+        amount: finalOrder.amount,
+        currency: finalOrder.currency,
+        providerTxnId: finalOrder.providerTxnId,
       });
       return finalOrder;
     });

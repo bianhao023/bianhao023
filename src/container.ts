@@ -31,6 +31,8 @@ import { UsdtWatcher } from './services/usdtWatcher';
 import { UserService } from './services/userService';
 import { ReconciliationService } from './services/reconciliationService';
 import { AuditLog, InMemoryAuditLog } from './audit/auditLog';
+import { WebhookDispatcher, MemoryWebhookRepository, OutboundEmitter } from './webhooks/outbound';
+import { WebhookWatcher } from './webhooks/webhookWatcher';
 import { LoggerNotifier, Notifier } from './notifications/notifier';
 import { TemplatedEmailNotifier } from './notifications/emailNotifier';
 import { SmtpMailSender } from './notifications/smtpMailSender';
@@ -72,6 +74,8 @@ export interface Container {
   routerMetrics: RouterMetrics;
   rateLimit?: RateLimitOptions;
   usdtWatcher?: UsdtWatcher;
+  webhooks?: WebhookDispatcher;
+  webhookWatcher?: WebhookWatcher;
   enabledMethods: PaymentMethod[];
 }
 
@@ -87,6 +91,17 @@ export function buildContainer(config: AppConfig, overrides: ContainerOverrides 
   const plans = overrides.plans ?? new PlanCatalog();
   const now = overrides.now ?? Date.now;
   const audit = overrides.audit ?? new InMemoryAuditLog(now);
+
+  // Outbound merchant webhooks (optional). When configured, business events are
+  // enqueued for signed, retried delivery.
+  let webhooks: WebhookDispatcher | undefined;
+  let webhookWatcher: WebhookWatcher | undefined;
+  let outbound: OutboundEmitter | undefined;
+  if (config.webhook) {
+    webhooks = new WebhookDispatcher(new MemoryWebhookRepository(), http, config.webhook, now);
+    webhookWatcher = new WebhookWatcher(webhooks);
+    outbound = webhooks;
+  }
 
   const users = new UserService(usersRepo, now, audit);
   const subscriptions = new SubscriptionService(subscriptionsRepo, plans, now);
@@ -117,6 +132,7 @@ export function buildContainer(config: AppConfig, overrides: ContainerOverrides 
     orderTtlMinutes: config.orderTtlMinutes,
     usdtUniqueDeltaMax: config.usdt?.uniqueAmountMaxDelta ?? 9999,
     audit,
+    outbound,
     now,
   });
 
@@ -127,6 +143,7 @@ export function buildContainer(config: AppConfig, overrides: ContainerOverrides 
     processedEvents,
     locker,
     audit,
+    outbound,
     now,
   });
 
@@ -195,6 +212,6 @@ export function buildContainer(config: AppConfig, overrides: ContainerOverrides 
   return {
     config, orders, payments, refunds, reports, expiry, expiryWatcher, users,
     reconciliation, audit, plans,
-    metrics, routerMetrics, rateLimit, usdtWatcher, enabledMethods,
+    metrics, routerMetrics, rateLimit, usdtWatcher, webhooks, webhookWatcher, enabledMethods,
   };
 }

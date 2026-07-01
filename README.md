@@ -5,14 +5,15 @@ A commercial-grade payment backend for a VPN service, supporting **WeChat Pay**,
 dependencies** (only Node.js ≥ 20 built-ins: `crypto`, `http`, `fetch`), which
 keeps it auditable, easy to deploy, and free of payment-SDK supply-chain risk.
 
-> Status: builds clean (`tsc`, strict mode) and passes **139 automated tests**
+> Status: builds clean (`tsc`, strict mode) and passes **151 automated tests**
 > covering signing, callbacks, the order state machine, idempotency, concurrency,
 > amount validation, USDT reconciliation, refunds (full/partial/manual and
 > asynchronous PROCESSING→final settlement), subscription expiry & notifications,
 > accounts (register/login/API-key auth), admin reporting, financial-consistency
-> reconciliation, an audit log, an OpenAPI spec, Prometheus metrics, in-process &
-> Redis rate limiting, SMTP email delivery, localized billing emails, monitoring
-> artifacts, the SQL row mappers, and the HTTP API end-to-end.
+> reconciliation, an audit log (in-memory + SQL), outbound webhooks with
+> retry/dead-letter, an OpenAPI spec, Prometheus metrics, in-process & Redis rate
+> limiting, SMTP email delivery, localized billing emails, monitoring artifacts,
+> the SQL row mappers, and the HTTP API end-to-end.
 
 ## Why one coherent codebase
 
@@ -108,6 +109,9 @@ run with any subset of WeChat / Alipay / USDT configured.
 | `POST /admin/expiry/run` | Run subscription reminders + deactivation pass 🔒 |
 | `POST /admin/reconciliation` | Run a financial-consistency audit (`?heal=true` to expire stale) 🔒 |
 | `GET /admin/audit` | Query the audit log (filters: `action`,`actor`,`subjectId`,`from`,`to`) 🔒 |
+| `GET /admin/webhooks` | List outbound webhook deliveries (filter `status`) 🔒 |
+| `POST /admin/webhooks/{id}/retry` | Requeue a dead-lettered delivery 🔒 |
+| `POST /internal/webhooks/process` | Drain due webhook deliveries (cron) |
 | `GET /metrics` | Prometheus metrics (HTTP + business gauges) |
 
 🔒 = requires `Authorization: Bearer $ADMIN_TOKEN`. Admin endpoints are disabled
@@ -179,6 +183,35 @@ email and preferred locale, the expiry notifier can deliver **localized billing
 emails automatically**: when `SMTP_*` is configured, the container wires
 `TemplatedEmailNotifier` with the user directory as its lookup — no extra glue
 code needed.
+
+## Outbound webhooks (retry + dead-letter)
+
+When `WEBHOOK_URL` is set, business events (`order.fulfilled`, `refund.updated`)
+are published to the merchant endpoint by `WebhookDispatcher`
+(`src/webhooks/outbound.ts`):
+
+- each delivery is **persisted** (never lost on crash) and signed with
+  `X-Webhook-Signature: sha256=<hmac>` over `timestamp.body` (verify with
+  `WEBHOOK_SECRET`), plus `X-Webhook-Id`/`-Event`/`-Timestamp` headers;
+- failures **retry with exponential backoff**, and after `WEBHOOK_MAX_ATTEMPTS`
+  a delivery is **dead-lettered**;
+- a background worker drains due deliveries; you can also trigger
+  `POST /internal/webhooks/process` from cron, inspect the queue/DLQ via
+  `GET /admin/webhooks?status=dead`, and requeue with
+  `POST /admin/webhooks/{id}/retry`.
+
+## Load & performance testing
+
+`scripts/loadtest.ts` (`npm run loadtest`) spins up an in-process server with a
+stub provider and drives a realistic mix (reads, registrations, full order+pay
+flow) through a fixed-size worker pool, reporting throughput and p50/p90/p99/max
+latency plus a status-code breakdown:
+
+```bash
+npm run build
+LOAD_CONCURRENCY=50 LOAD_TOTAL=5000 npm run loadtest
+# or time-boxed: LOAD_DURATION_SEC=30 npm run loadtest
+```
 
 ## API documentation
 
@@ -378,7 +411,9 @@ const container = buildContainer(config, {
 
 `SqlProcessedEventStore.markIfNew` uses `INSERT … ON CONFLICT DO NOTHING`, which
 is atomic across multiple application instances, so callbacks are still
-processed exactly once when scaled horizontally.
+processed exactly once when scaled horizontally. A `SqlAuditLog`
+(`src/storage/sql/sqlAuditLog.ts`, `audit_events` table) persists the audit log
+the same way — pass it as `overrides.audit`.
 
 Run the server behind HTTPS, keep private keys in a secret manager, and configure
 the provider `notify_url`s to your public webhook endpoints.

@@ -9,6 +9,7 @@ import { ExpiryService } from '../services/expiryService';
 import { UserService } from '../services/userService';
 import { ReconciliationService } from '../services/reconciliationService';
 import { AuditLog } from '../audit/auditLog';
+import { WebhookDispatcher, DeliveryStatus } from '../webhooks/outbound';
 import { buildOpenApiSpec } from './openapi';
 import { SWAGGER_UI_HTML } from './docsHtml';
 import { toPublicUser } from '../domain/user';
@@ -33,6 +34,7 @@ export interface ApiDeps {
   routerMetrics?: RouterMetrics;
   rateLimit?: RateLimitOptions;
   usdtWatcher?: UsdtWatcher;
+  webhooks?: WebhookDispatcher;
 }
 
 /** Public, sanitised projection of an order returned to clients. */
@@ -253,6 +255,14 @@ export function buildRouter(deps: ApiDeps): Router {
     sendJson(res, 200, { settled });
   });
 
+  // Drain due outbound webhook deliveries (e.g. from cron).
+  r.post('/internal/webhooks/process', async (_ctx, res) => {
+    const result = deps.webhooks
+      ? await deps.webhooks.processDue()
+      : { delivered: 0, retried: 0, dead: 0 };
+    sendJson(res, 200, result);
+  });
+
   // ── API documentation ────────────────────────────────────────────────────
   r.get('/openapi.json', (_ctx, res) => sendJson(res, 200, buildOpenApiSpec(deps.enabledMethods)));
   r.get('/docs', (_ctx, res) => sendRaw(res, 200, 'text/html; charset=utf-8', SWAGGER_UI_HTML));
@@ -292,6 +302,35 @@ export function buildRouter(deps: ApiDeps): Router {
     await adminGuard(ctx, deps);
     const report = await deps.reconciliation.run({ heal: ctx.query.get('heal') === 'true' });
     sendJson(res, 200, report);
+  });
+
+  // List outbound webhook deliveries (optionally by status), for DLQ inspection.
+  r.get('/admin/webhooks', async (ctx, res) => {
+    await adminGuard(ctx, deps);
+    if (!deps.webhooks) {
+      sendJson(res, 200, { total: 0, limit: 0, offset: 0, items: [] });
+      return;
+    }
+    const status = ctx.query.get('status') as DeliveryStatus | null;
+    if (status && !['pending', 'delivered', 'dead'].includes(status)) {
+      throw new ValidationError(`invalid status: ${status}`);
+    }
+    const limit = intParam(ctx.query, 'limit', 50, 500);
+    const offset = intParam(ctx.query, 'offset', 0, Number.MAX_SAFE_INTEGER);
+    const { total, items } = await deps.webhooks.list(status ?? undefined, limit, offset);
+    sendJson(res, 200, { total, limit, offset, items });
+  });
+
+  // Requeue a (dead-lettered) webhook delivery for immediate retry.
+  r.post('/admin/webhooks/:id/retry', async (ctx, res) => {
+    await adminGuard(ctx, deps);
+    if (!deps.webhooks) throw new NotFoundError('webhooks are not configured');
+    try {
+      const delivery = await deps.webhooks.retry(ctx.params['id']);
+      sendJson(res, 200, delivery);
+    } catch {
+      throw new NotFoundError(`delivery not found: ${ctx.params['id']}`);
+    }
   });
 
   // Query the audit log.

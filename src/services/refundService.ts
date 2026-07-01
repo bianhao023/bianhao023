@@ -14,6 +14,7 @@ import {
 } from '../storage/repository';
 import { assertTransition } from '../core/orderStateMachine';
 import { AuditLog } from '../audit/auditLog';
+import { OutboundEmitter } from '../webhooks/outbound';
 import { newOutTradeNo, uuid } from '../utils/ids';
 import { logger } from '../utils/logger';
 
@@ -37,6 +38,7 @@ export interface RefundServiceDeps {
   processedEvents: ProcessedEventStore;
   locker: Locker;
   audit?: AuditLog;
+  outbound?: OutboundEmitter;
   now?: () => number;
 }
 
@@ -131,6 +133,14 @@ export class RefundService {
         actor: order.userId,
         subjectId: order.id,
         metadata: { refundId: refund.id, amount, status: refund.status },
+      });
+      await this.deps.outbound?.emit('refund.updated', {
+        orderId: order.id,
+        refundId: refund.id,
+        outRefundNo: refund.outRefundNo,
+        amount,
+        currency: refund.currency,
+        status: refund.status,
       });
       return refund;
     });

@@ -63,3 +63,16 @@ CREATE TABLE IF NOT EXISTS processed_events (
   event_id    TEXT PRIMARY KEY,
   created_at  BIGINT NOT NULL DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS audit_events (
+  id          TEXT PRIMARY KEY,
+  at          BIGINT NOT NULL,
+  action      TEXT NOT NULL,
+  actor       TEXT,
+  subject_id  TEXT,
+  metadata    JSONB NOT NULL DEFAULT '{}'::jsonb
+);
+CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_events (action);
+CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_events (actor);
+CREATE INDEX IF NOT EXISTS idx_audit_subject ON audit_events (subject_id);
+CREATE INDEX IF NOT EXISTS idx_audit_at ON audit_events (at);

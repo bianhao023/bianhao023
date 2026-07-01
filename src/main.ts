@@ -16,6 +16,7 @@ function main(): void {
 
   container.usdtWatcher?.start();
   container.expiryWatcher.start();
+  container.webhookWatcher?.start();
 
   const server = createHttpServer(container);
   server.listen(config.port, () => {
@@ -29,6 +30,7 @@ function main(): void {
     logger.info('shutting down', { signal: sig });
     container.usdtWatcher?.stop();
     container.expiryWatcher.stop();
+    container.webhookWatcher?.stop();
     server.close(() => process.exit(0));
     // Force-exit if connections do not drain promptly.
     setTimeout(() => process.exit(0), 5000).unref();
