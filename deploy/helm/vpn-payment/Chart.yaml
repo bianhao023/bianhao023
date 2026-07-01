@@ -1,0 +1,12 @@
+apiVersion: v2
+name: vpn-payment
+description: Helm chart for the VPN payment backend (Node.js, zero runtime deps).
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - payment
+  - vpn
+  - backend
+maintainers:
+  - name: vpn-payment maintainers

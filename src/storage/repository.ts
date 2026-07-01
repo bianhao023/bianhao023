@@ -1,5 +1,6 @@
 import { Order, Subscription } from '../domain/types';
 import { Refund } from '../domain/refund';
+import { User } from '../domain/user';
 
 export interface OrderRepository {
   create(order: Order): Promise<Order>;
@@ -21,6 +22,14 @@ export interface RefundRepository {
   update(refund: Refund): Promise<Refund>;
   /** All refunds (reporting/admin helper). */
   all(): Promise<Refund[]>;
+}
+
+export interface UserRepository {
+  create(user: User): Promise<User>;
+  findById(id: string): Promise<User | undefined>;
+  findByEmail(email: string): Promise<User | undefined>;
+  findByApiKey(apiKey: string): Promise<User | undefined>;
+  update(user: User): Promise<User>;
 }
 
 export interface SubscriptionRepository {

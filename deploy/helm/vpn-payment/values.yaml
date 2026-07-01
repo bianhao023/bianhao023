@@ -1,0 +1,116 @@
+# Default values for vpn-payment.
+
+replicaCount: 2
+
+image:
+  repository: vpn-payment-backend
+  tag: latest
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# Container listen port (also used by probes, service targetPort, metrics scrape).
+containerPort: 3000
+
+# Pod-level security context.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+# Container-level security context.
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 1000
+  capabilities:
+    drop:
+      - ALL
+  seccompProfile:
+    type: RuntimeDefault
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+# Non-secret application configuration rendered into a ConfigMap and injected
+# via envFrom. All values are strings.
+env:
+  PORT: "3000"
+  ORDER_TTL_MINUTES: "30"
+  LOG_LEVEL: "info"
+  EXPIRY_REMINDER_DAYS: "3"
+  RATE_LIMIT_ENABLED: "true"
+  RATE_LIMIT_MAX: "100"
+  RATE_LIMIT_WINDOW_SEC: "60"
+  USDT_API_BASE: "https://api.trongrid.io"
+  USDT_CONTRACT_ADDRESS: "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
+  USDT_MIN_CONFIRMATIONS: "19"
+  ALIPAY_GATEWAY: "https://openapi.alipay.com/gateway.do"
+  WECHAT_API_BASE: "https://api.mch.weixin.qq.com"
+
+# Secrets are NOT managed by this chart. Provide a pre-created Secret whose keys
+# match the app's secret env vars, and set its name here. It is injected via
+# secretRef (envFrom). Leave empty to skip the secret envFrom entirely.
+existingSecret: "vpn-payment-secret"
+
+# Liveness/readiness probes (both hit /healthz).
+probes:
+  path: /healthz
+  liveness:
+    initialDelaySeconds: 10
+    periodSeconds: 15
+    timeoutSeconds: 3
+    failureThreshold: 3
+  readiness:
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: false
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+  host: vpn-pay.example.com
+  path: /
+  pathType: Prefix
+  tls:
+    enabled: true
+    secretName: vpn-payment-tls
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+
+serviceMonitor:
+  enabled: false
+  interval: 30s
+  path: /metrics
+  # Extra labels so the Prometheus Operator's serviceMonitorSelector picks it up.
+  labels:
+    release: prometheus
+
+# Prometheus scrape annotations added to pods (used by annotation-based scraping).
+metrics:
+  path: /metrics
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

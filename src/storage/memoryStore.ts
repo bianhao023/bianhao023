@@ -1,9 +1,11 @@
 import { Order, Subscription } from '../domain/types';
 import { Refund } from '../domain/refund';
+import { User } from '../domain/user';
 import {
   OrderRepository,
   RefundRepository,
   SubscriptionRepository,
+  UserRepository,
   ProcessedEventStore,
   Locker,
 } from './repository';
@@ -63,6 +65,47 @@ export class MemoryOrderRepository implements OrderRepository {
 
   async all(): Promise<Order[]> {
     return [...this.byId.values()].map(clone);
+  }
+}
+
+export class MemoryUserRepository implements UserRepository {
+  private byId = new Map<string, User>();
+  private byEmail = new Map<string, string>();
+  private byApiKey = new Map<string, string>();
+
+  async create(user: User): Promise<User> {
+    const email = user.email.toLowerCase();
+    if (this.byEmail.has(email)) throw new Error(`email already registered: ${email}`);
+    const stored = { ...user, email };
+    this.byId.set(user.id, clone(stored));
+    this.byEmail.set(email, user.id);
+    this.byApiKey.set(user.apiKey, user.id);
+    return clone(stored);
+  }
+
+  async findById(id: string): Promise<User | undefined> {
+    const u = this.byId.get(id);
+    return u ? clone(u) : undefined;
+  }
+
+  async findByEmail(email: string): Promise<User | undefined> {
+    const id = this.byEmail.get(email.toLowerCase());
+    return id ? this.findById(id) : undefined;
+  }
+
+  async findByApiKey(apiKey: string): Promise<User | undefined> {
+    const id = this.byApiKey.get(apiKey);
+    return id ? this.findById(id) : undefined;
+  }
+
+  async update(user: User): Promise<User> {
+    const prev = this.byId.get(user.id);
+    if (!prev) throw new Error(`unknown user: ${user.id}`);
+    // Drop a rotated API key so the old one stops resolving.
+    if (prev.apiKey !== user.apiKey) this.byApiKey.delete(prev.apiKey);
+    this.byId.set(user.id, clone(user));
+    this.byApiKey.set(user.apiKey, user.id);
+    return clone(user);
   }
 }
 

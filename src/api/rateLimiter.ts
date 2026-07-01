@@ -15,12 +15,18 @@ export interface RateLimitDecision {
   retryAfterSec: number;
 }
 
+/** The contract the router depends on; swap in a Redis-backed implementation. */
+export interface RateLimiterLike {
+  check(key: string): RateLimitDecision | Promise<RateLimitDecision>;
+  sweep?(): void;
+}
+
 interface Window {
   count: number;
   resetAt: number;
 }
 
-export class RateLimiter {
+export class RateLimiter implements RateLimiterLike {
   private windows = new Map<string, Window>();
 
   constructor(

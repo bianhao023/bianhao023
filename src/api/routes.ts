@@ -6,6 +6,8 @@ import { PaymentService } from '../services/paymentService';
 import { RefundService } from '../services/refundService';
 import { ReportService, ReportFilter } from '../services/reportService';
 import { ExpiryService } from '../services/expiryService';
+import { UserService } from '../services/userService';
+import { toPublicUser } from '../domain/user';
 import { PlanCatalog } from '../services/plans';
 import { UsdtWatcher } from '../services/usdtWatcher';
 import { Metrics } from '../observability/metrics';
@@ -16,6 +18,7 @@ export interface ApiDeps {
   refunds: RefundService;
   reports: ReportService;
   expiry: ExpiryService;
+  users: UserService;
   plans: PlanCatalog;
   enabledMethods: PaymentMethod[];
   /** Bearer token guarding /admin. Undefined disables admin endpoints. */
@@ -58,6 +61,12 @@ class AuthError extends AppError {
   constructor(message: string, status = 401) {
     super('UNAUTHORIZED', message, status);
   }
+}
+
+/** Extract a Bearer token from the Authorization header (empty string if none). */
+function bearerToken(ctx: ReqContext): string {
+  const header = ctx.headers['authorization'] ?? '';
+  return header.startsWith('Bearer ') ? header.slice('Bearer '.length) : '';
 }
 
 /** Enforce the admin bearer token (constant-time). Disabled when no token set. */
@@ -116,6 +125,35 @@ export function buildRouter(deps: ApiDeps): Router {
       priceUsdtDisplay: fromMinorUnits(p.priceUsdtMicro, 'USDT'),
     }));
     sendJson(res, 200, { plans, enabledMethods: deps.enabledMethods });
+  });
+
+  // ── Users / accounts ─────────────────────────────────────────────────────
+  r.post('/api/users/register', async (ctx, res) => {
+    const body = parseJsonBody(ctx);
+    const result = await deps.users.register({
+      email: requireString(body, 'email'),
+      password: requireString(body, 'password'),
+      locale: typeof body['locale'] === 'string' ? (body['locale'] as string) : undefined,
+      name: typeof body['name'] === 'string' ? (body['name'] as string) : undefined,
+    });
+    sendJson(res, 201, result);
+  });
+
+  r.post('/api/users/login', async (ctx, res) => {
+    const body = parseJsonBody(ctx);
+    const result = await deps.users.login(requireString(body, 'email'), requireString(body, 'password'));
+    sendJson(res, 200, result);
+  });
+
+  r.get('/api/users/me', async (ctx, res) => {
+    const user = await deps.users.authenticate(bearerToken(ctx));
+    sendJson(res, 200, toPublicUser(user));
+  });
+
+  r.post('/api/users/me/rotate-key', async (ctx, res) => {
+    const user = await deps.users.authenticate(bearerToken(ctx));
+    const apiKey = await deps.users.rotateApiKey(user.id);
+    sendJson(res, 200, { apiKey });
   });
 
   r.post('/api/orders', async (ctx, res) => {

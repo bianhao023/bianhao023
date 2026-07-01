@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: vpn-payment
+  namespace: vpn-payment
+  labels:
+    app.kubernetes.io/name: vpn-payment
+    app.kubernetes.io/instance: vpn-payment
+    app.kubernetes.io/component: backend
+    app.kubernetes.io/part-of: vpn-payment
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: vpn-payment
+    app.kubernetes.io/instance: vpn-payment
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP

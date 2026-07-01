@@ -1,7 +1,7 @@
 import { IncomingMessage, ServerResponse } from 'node:http';
 import { AppError } from '../domain/errors';
 import { Counter, Histogram } from '../observability/metrics';
-import { RateLimiter } from './rateLimiter';
+import { RateLimiterLike } from './rateLimiter';
 import { logger } from '../utils/logger';
 
 /** Optional request-level instrumentation for the router. */
@@ -13,7 +13,7 @@ export interface RouterMetrics {
 
 /** Optional rate-limiting configuration for the router. */
 export interface RateLimitOptions {
-  limiter: RateLimiter;
+  limiter: RateLimiterLike;
   /** Route patterns exempt from limiting (e.g. /healthz, /metrics). */
   skipRoutes: Set<string>;
 }
@@ -143,7 +143,7 @@ export class Router {
     // Rate limiting (per client IP + route), unless the route is exempt.
     if (this.rateLimit && !this.rateLimit.skipRoutes.has(routeLabel)) {
       const ip = clientIp(req, headers);
-      const decision = this.rateLimit.limiter.check(`${ip}|${routeLabel}`);
+      const decision = await this.rateLimit.limiter.check(`${ip}|${routeLabel}`);
       res.setHeader('X-RateLimit-Limit', String(decision.limit));
       res.setHeader('X-RateLimit-Remaining', String(decision.remaining));
       res.setHeader('X-RateLimit-Reset', String(Math.ceil(decision.resetAt / 1000)));

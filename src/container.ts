@@ -10,6 +10,7 @@ import {
   MemoryProcessedEventStore,
   MemoryRefundRepository,
   MemorySubscriptionRepository,
+  MemoryUserRepository,
 } from './storage/memoryStore';
 import {
   Locker,
@@ -17,6 +18,7 @@ import {
   ProcessedEventStore,
   RefundRepository,
   SubscriptionRepository,
+  UserRepository,
 } from './storage/repository';
 import { PlanCatalog } from './services/plans';
 import { SubscriptionService } from './services/subscriptionService';
@@ -26,7 +28,10 @@ import { ReportService } from './services/reportService';
 import { ExpiryService } from './services/expiryService';
 import { ExpiryWatcher } from './services/expiryWatcher';
 import { UsdtWatcher } from './services/usdtWatcher';
+import { UserService } from './services/userService';
 import { LoggerNotifier, Notifier } from './notifications/notifier';
+import { TemplatedEmailNotifier } from './notifications/emailNotifier';
+import { SmtpMailSender } from './notifications/smtpMailSender';
 import { Metrics } from './observability/metrics';
 import { RouterMetrics, RateLimitOptions } from './api/http';
 import { RateLimiter } from './api/rateLimiter';
@@ -38,6 +43,7 @@ export interface ContainerOverrides {
   orders?: OrderRepository;
   refunds?: RefundRepository;
   subscriptions?: SubscriptionRepository;
+  users?: UserRepository;
   processedEvents?: ProcessedEventStore;
   locker?: Locker;
   plans?: PlanCatalog;
@@ -55,6 +61,7 @@ export interface Container {
   reports: ReportService;
   expiry: ExpiryService;
   expiryWatcher: ExpiryWatcher;
+  users: UserService;
   plans: PlanCatalog;
   metrics: Metrics;
   routerMetrics: RouterMetrics;
@@ -70,10 +77,12 @@ export function buildContainer(config: AppConfig, overrides: ContainerOverrides 
   const refundsRepo = overrides.refunds ?? new MemoryRefundRepository();
   const subscriptionsRepo = overrides.subscriptions ?? new MemorySubscriptionRepository();
   const processedEvents = overrides.processedEvents ?? new MemoryProcessedEventStore();
+  const usersRepo = overrides.users ?? new MemoryUserRepository();
   const locker = overrides.locker ?? new InProcessLocker();
   const plans = overrides.plans ?? new PlanCatalog();
   const now = overrides.now ?? Date.now;
 
+  const users = new UserService(usersRepo, now);
   const subscriptions = new SubscriptionService(subscriptionsRepo, plans, now);
 
   const providers = overrides.providers ?? new Map<PaymentMethod, PaymentProvider>();
@@ -115,7 +124,17 @@ export function buildContainer(config: AppConfig, overrides: ContainerOverrides 
 
   const reports = new ReportService(orders, refundsRepo);
 
-  const notifier = overrides.notifier ?? new LoggerNotifier();
+  // With SMTP configured we can close the loop: expiry notifications become
+  // localized emails addressed via the user directory. Otherwise just log.
+  const notifier: Notifier =
+    overrides.notifier ??
+    (config.smtp
+      ? new TemplatedEmailNotifier({
+          sender: new SmtpMailSender(config.smtp),
+          plans,
+          users: users.contactLookup,
+        })
+      : new LoggerNotifier());
   const expiry = new ExpiryService({
     subscriptions: subscriptionsRepo,
     notifier,
@@ -165,7 +184,7 @@ export function buildContainer(config: AppConfig, overrides: ContainerOverrides 
   const enabledMethods = [...providers.keys()];
 
   return {
-    config, orders, payments, refunds, reports, expiry, expiryWatcher, plans,
+    config, orders, payments, refunds, reports, expiry, expiryWatcher, users, plans,
     metrics, routerMetrics, rateLimit, usdtWatcher, enabledMethods,
   };
 }

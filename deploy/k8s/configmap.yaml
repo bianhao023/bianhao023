@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vpn-payment-config
+  namespace: vpn-payment
+  labels:
+    app.kubernetes.io/name: vpn-payment
+    app.kubernetes.io/instance: vpn-payment
+    app.kubernetes.io/component: backend
+    app.kubernetes.io/part-of: vpn-payment
+data:
+  # Non-secret application configuration. All values are strings.
+  PORT: "3000"
+  ORDER_TTL_MINUTES: "30"
+  LOG_LEVEL: "info"
+  EXPIRY_REMINDER_DAYS: "3"
+  RATE_LIMIT_ENABLED: "true"
+  RATE_LIMIT_MAX: "100"
+  RATE_LIMIT_WINDOW_SEC: "60"
+  USDT_API_BASE: "https://api.trongrid.io"
+  USDT_CONTRACT_ADDRESS: "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
+  USDT_MIN_CONFIRMATIONS: "19"
+  ALIPAY_GATEWAY: "https://openapi.alipay.com/gateway.do"
+  WECHAT_API_BASE: "https://api.mch.weixin.qq.com"

@@ -1,0 +1,33 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: vpn-payment
+  namespace: vpn-payment
+  labels:
+    app.kubernetes.io/name: vpn-payment
+    app.kubernetes.io/instance: vpn-payment
+    app.kubernetes.io/component: backend
+    app.kubernetes.io/part-of: vpn-payment
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "1m"
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
+    # cert-manager.io/cluster-issuer: "letsencrypt-prod"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - vpn-pay.example.com
+      secretName: vpn-payment-tls
+  rules:
+    - host: vpn-pay.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: vpn-payment
+                port:
+                  number: 80

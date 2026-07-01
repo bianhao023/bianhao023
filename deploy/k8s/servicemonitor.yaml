@@ -1,0 +1,25 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: vpn-payment
+  namespace: vpn-payment
+  labels:
+    app.kubernetes.io/name: vpn-payment
+    app.kubernetes.io/instance: vpn-payment
+    app.kubernetes.io/component: backend
+    app.kubernetes.io/part-of: vpn-payment
+    # Add the label your Prometheus Operator selects on, e.g. release: prometheus
+    release: prometheus
+spec:
+  namespaceSelector:
+    matchNames:
+      - vpn-payment
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: vpn-payment
+      app.kubernetes.io/instance: vpn-payment
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 30s
+      scheme: http

@@ -5,13 +5,14 @@ A commercial-grade payment backend for a VPN service, supporting **WeChat Pay**,
 dependencies** (only Node.js ≥ 20 built-ins: `crypto`, `http`, `fetch`), which
 keeps it auditable, easy to deploy, and free of payment-SDK supply-chain risk.
 
-> Status: builds clean (`tsc`, strict mode) and passes **101 automated tests**
+> Status: builds clean (`tsc`, strict mode) and passes **115 automated tests**
 > covering signing, callbacks, the order state machine, idempotency, concurrency,
 > amount validation, USDT reconciliation, refunds (full/partial/manual and
 > asynchronous PROCESSING→final settlement), subscription expiry & notifications,
-> admin reporting/reconciliation, Prometheus metrics, rate limiting, SMTP email
-> delivery, localized billing emails, monitoring artifacts, the SQL row mappers,
-> and the HTTP API end-to-end.
+> accounts (register/login/API-key auth), admin reporting/reconciliation,
+> Prometheus metrics, in-process & Redis rate limiting, SMTP email delivery,
+> localized billing emails, monitoring artifacts, the SQL row mappers, and the
+> HTTP API end-to-end.
 
 ## Why one coherent codebase
 
@@ -86,6 +87,10 @@ run with any subset of WeChat / Alipay / USDT configured.
 |---|---|
 | `GET /healthz` | Liveness + enabled methods |
 | `GET /api/plans` | List VPN plans with prices |
+| `POST /api/users/register` | Create an account. Body: `{ email, password, locale?, name? }` |
+| `POST /api/users/login` | Authenticate; returns the account's API key |
+| `GET /api/users/me` | Current account (auth: `Authorization: Bearer <apiKey>`) |
+| `POST /api/users/me/rotate-key` | Rotate the API key (invalidates the old one) 🔑 |
 | `POST /api/orders` | Create an order. Body: `{ userId, planId, method }`; optional `Idempotency-Key` header |
 | `GET /api/orders/:id` | Order status + pay info |
 | `POST /api/orders/:id/sync` | Force a status re-check (used while waiting on USDT) |
@@ -161,6 +166,16 @@ curl -X POST http://localhost:3000/api/orders/<id>/refund \
   -d '{"amount":500,"reason":"partial refund","outRefundNo":"RF-001"}'
 ```
 
+## Accounts
+
+`UserService` (`src/services/userService.ts`) provides registration, login and
+API-key authentication. Passwords are hashed with scrypt (salted, constant-time
+verification); API keys are opaque `vpk_…` tokens. Because accounts store an
+email and preferred locale, the expiry notifier can deliver **localized billing
+emails automatically**: when `SMTP_*` is configured, the container wires
+`TemplatedEmailNotifier` with the user directory as its lookup — no extra glue
+code needed.
+
 ## Reconciliation & reporting
 
 Admin endpoints (bearer-token protected) provide reconciliation data:
@@ -217,8 +232,20 @@ A fixed-window limiter (`src/api/rateLimiter.ts`) caps requests per client IP +
 route. Over-limit requests get `429` with `Retry-After` and `X-RateLimit-*`
 headers; `/healthz` and `/metrics` are exempt. Configure with `RATE_LIMIT_*`
 (disable via `RATE_LIMIT_ENABLED=false`). Rejections are counted in
-`vpn_rate_limited_total{route}`. The in-process limiter suits a single node; for
-a cluster, back the same interface with Redis.
+`vpn_rate_limited_total{route}`. The in-process limiter suits a single node.
+
+For a cluster, use the **Redis-backed** `RedisRateLimiter`
+(`src/api/redisRateLimiter.ts`) — a drop-in `RateLimiterLike` using a
+fixed-window `INCR`/`PEXPIRE` scheme. It depends only on an injected `RedisLike`
+interface (`incr`/`pexpire`/`pttl`), so it works with `node-redis` or `ioredis`
+without adding a hard dependency:
+
+```ts
+const limiter = new RedisRateLimiter(
+  { incr: (k) => client.incr(k), pexpire: (k, ms) => client.pExpire(k, ms), pttl: (k) => client.pTTL(k) },
+  config.rateLimit.max, config.rateLimit.windowMs,
+);
+```
 
 ## Outbound email (SMTP)
 
@@ -282,6 +309,23 @@ docker compose up --build
 The runtime image is a slim `node:22-alpine` containing only the compiled
 `dist/` (no runtime `node_modules`, since the app has zero runtime deps), runs
 as the unprivileged `node` user, and ships a `/healthz` HEALTHCHECK.
+
+### Kubernetes / Helm
+
+`deploy/` contains production-ready manifests and a Helm chart (`deploy/README.md`
+for details):
+
+- `deploy/k8s/` — raw manifests: Deployment (2 replicas, hardened
+  securityContext, `/healthz` probes, resource requests/limits), Service,
+  Ingress, HPA, ConfigMap, example Secret, and a Prometheus-Operator
+  ServiceMonitor.
+- `deploy/helm/vpn-payment/` — a parameterized chart (image, ingress,
+  autoscaling, serviceMonitor toggles; secrets referenced via `existingSecret`).
+
+```bash
+kubectl apply -f deploy/k8s/                       # raw manifests
+helm install vpn-payment deploy/helm/vpn-payment   # or via Helm
+```
 
 ## Production notes
 
