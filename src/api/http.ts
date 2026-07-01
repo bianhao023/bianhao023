@@ -1,6 +1,13 @@
 import { IncomingMessage, ServerResponse } from 'node:http';
 import { AppError } from '../domain/errors';
+import { Counter, Histogram } from '../observability/metrics';
 import { logger } from '../utils/logger';
+
+/** Optional request-level instrumentation for the router. */
+export interface RouterMetrics {
+  requests: Counter; // labels: method, route, code
+  duration: Histogram; // labels: route (milliseconds)
+}
 
 export interface ReqContext {
   method: string;
@@ -15,6 +22,8 @@ export type Handler = (ctx: ReqContext, res: ServerResponse) => Promise<void> | 
 
 interface Route {
   method: string;
+  /** Original pattern (used as a low-cardinality metrics label). */
+  pattern: string;
   /** Pattern segments; ":name" captures a param. */
   segments: string[];
   handler: Handler;
@@ -24,9 +33,12 @@ interface Route {
 export class Router {
   private routes: Route[] = [];
 
+  constructor(private readonly metrics?: RouterMetrics) {}
+
   add(method: string, pattern: string, handler: Handler): this {
     this.routes.push({
       method: method.toUpperCase(),
+      pattern: pattern.startsWith('/') ? pattern : `/${pattern}`,
       segments: pattern.split('/').filter(Boolean),
       handler,
     });
@@ -86,10 +98,22 @@ export class Router {
   }
 
   private async dispatch(req: IncomingMessage, res: ServerResponse, rawBody: string): Promise<void> {
+    const started = Date.now();
+    const httpMethod = req.method ?? 'GET';
     const url = new URL(req.url ?? '/', 'http://localhost');
-    const matched = this.match(req.method ?? 'GET', url.pathname);
+    const matched = this.match(httpMethod, url.pathname);
+    // Low-cardinality route label: the pattern, or "unmatched" for 404s.
+    const routeLabel = matched ? matched.route.pattern : 'unmatched';
+
+    const record = () => {
+      if (!this.metrics) return;
+      this.metrics.requests.inc({ method: httpMethod, route: routeLabel, code: String(res.statusCode) });
+      this.metrics.duration.observe({ route: routeLabel }, Date.now() - started);
+    };
+
     if (!matched) {
       sendJson(res, 404, { error: 'NOT_FOUND', message: `no route for ${req.method} ${url.pathname}` });
+      record();
       return;
     }
     const headers: Record<string, string> = {};
@@ -97,7 +121,7 @@ export class Router {
       headers[k.toLowerCase()] = Array.isArray(v) ? v.join(',') : (v ?? '');
     }
     const ctx: ReqContext = {
-      method: req.method ?? 'GET',
+      method: httpMethod,
       path: url.pathname,
       params: matched.params,
       query: url.searchParams,
@@ -113,6 +137,8 @@ export class Router {
         logger.error('unhandled error', { error: (err as Error).message, stack: (err as Error).stack });
         sendJson(res, 500, { error: 'INTERNAL', message: 'internal server error' });
       }
+    } finally {
+      record();
     }
   }
 }

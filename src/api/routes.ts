@@ -8,7 +8,8 @@ import { ReportService, ReportFilter } from '../services/reportService';
 import { ExpiryService } from '../services/expiryService';
 import { PlanCatalog } from '../services/plans';
 import { UsdtWatcher } from '../services/usdtWatcher';
-import { parseJsonBody, Router, sendJson, sendRaw, ReqContext } from './http';
+import { Metrics } from '../observability/metrics';
+import { parseJsonBody, Router, RouterMetrics, sendJson, sendRaw, ReqContext } from './http';
 
 export interface ApiDeps {
   payments: PaymentService;
@@ -19,6 +20,8 @@ export interface ApiDeps {
   enabledMethods: PaymentMethod[];
   /** Bearer token guarding /admin. Undefined disables admin endpoints. */
   adminToken?: string;
+  metrics?: Metrics;
+  routerMetrics?: RouterMetrics;
   usdtWatcher?: UsdtWatcher;
 }
 
@@ -93,10 +96,16 @@ function reportFilter(q: URLSearchParams): ReportFilter {
 }
 
 export function buildRouter(deps: ApiDeps): Router {
-  const r = new Router();
+  const r = new Router(deps.routerMetrics);
 
   r.get('/healthz', (_ctx, res) => {
     sendJson(res, 200, { status: 'ok', methods: deps.enabledMethods });
+  });
+
+  // Prometheus scrape endpoint (kept open for scrapers; restrict via network policy).
+  r.get('/metrics', async (_ctx, res) => {
+    const body = deps.metrics ? await deps.metrics.render() : '';
+    sendRaw(res, 200, 'text/plain; version=0.0.4; charset=utf-8', body);
   });
 
   r.get('/api/plans', (_ctx, res) => {

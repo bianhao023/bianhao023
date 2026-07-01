@@ -27,6 +27,8 @@ import { ExpiryService } from './services/expiryService';
 import { ExpiryWatcher } from './services/expiryWatcher';
 import { UsdtWatcher } from './services/usdtWatcher';
 import { LoggerNotifier, Notifier } from './notifications/notifier';
+import { Metrics } from './observability/metrics';
+import { RouterMetrics } from './api/http';
 
 /** Overrides used by tests to inject fakes / fixed clocks. */
 export interface ContainerOverrides {
@@ -53,6 +55,8 @@ export interface Container {
   expiry: ExpiryService;
   expiryWatcher: ExpiryWatcher;
   plans: PlanCatalog;
+  metrics: Metrics;
+  routerMetrics: RouterMetrics;
   usdtWatcher?: UsdtWatcher;
   enabledMethods: PaymentMethod[];
 }
@@ -122,7 +126,34 @@ export function buildContainer(config: AppConfig, overrides: ContainerOverrides 
     usdtWatcher = new UsdtWatcher(orders, payments);
   }
 
+  // ── Metrics ───────────────────────────────────────────────────────────────
+  const metrics = new Metrics();
+  const httpRequests = metrics.counter('vpn_http_requests_total', 'Total HTTP requests', ['method', 'route', 'code']);
+  const httpDuration = metrics.histogram('vpn_http_request_duration_ms', 'HTTP request duration in milliseconds', ['route']);
+  const ordersGauge = metrics.gauge('vpn_orders', 'Current order count by status', ['status']);
+  const refundsGauge = metrics.gauge('vpn_refunds', 'Current refund count by status', ['status']);
+  const subsGauge = metrics.gauge('vpn_subscriptions_active', 'Currently active subscriptions');
+  metrics.addCollector(async () => {
+    const allOrders = await orders.all();
+    ordersGauge.reset();
+    const os: Record<string, number> = {};
+    for (const o of allOrders) os[o.status] = (os[o.status] ?? 0) + 1;
+    for (const [status, count] of Object.entries(os)) ordersGauge.set({ status }, count);
+
+    const allRefunds = await refundsRepo.all();
+    refundsGauge.reset();
+    const rs: Record<string, number> = {};
+    for (const r of allRefunds) rs[r.status] = (rs[r.status] ?? 0) + 1;
+    for (const [status, count] of Object.entries(rs)) refundsGauge.set({ status }, count);
+
+    subsGauge.set({}, (await subscriptionsRepo.listActive()).length);
+  });
+  const routerMetrics: RouterMetrics = { requests: httpRequests, duration: httpDuration };
+
   const enabledMethods = [...providers.keys()];
 
-  return { config, orders, payments, refunds, reports, expiry, expiryWatcher, plans, usdtWatcher, enabledMethods };
+  return {
+    config, orders, payments, refunds, reports, expiry, expiryWatcher, plans,
+    metrics, routerMetrics, usdtWatcher, enabledMethods,
+  };
 }

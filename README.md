@@ -5,12 +5,12 @@ A commercial-grade payment backend for a VPN service, supporting **WeChat Pay**,
 dependencies** (only Node.js ≥ 20 built-ins: `crypto`, `http`, `fetch`), which
 keeps it auditable, easy to deploy, and free of payment-SDK supply-chain risk.
 
-> Status: builds clean (`tsc`, strict mode) and passes **78 automated tests**
+> Status: builds clean (`tsc`, strict mode) and passes **90 automated tests**
 > covering signing, callbacks, the order state machine, idempotency, concurrency,
 > amount validation, USDT reconciliation, refunds (full/partial/manual and
 > asynchronous PROCESSING→final settlement), subscription expiry & notifications,
-> admin reporting/reconciliation, the SQL row mappers, and the HTTP API
-> end-to-end.
+> admin reporting/reconciliation, Prometheus metrics, localized billing emails,
+> the SQL row mappers, and the HTTP API end-to-end.
 
 ## Why one coherent codebase
 
@@ -98,6 +98,7 @@ run with any subset of WeChat / Alipay / USDT configured.
 | `GET /admin/orders` | Paginated orders (`limit`,`offset`,filters) 🔒 |
 | `GET /admin/refunds` | Paginated refunds (`limit`,`offset`) 🔒 |
 | `POST /admin/expiry/run` | Run subscription reminders + deactivation pass 🔒 |
+| `GET /metrics` | Prometheus metrics (HTTP + business gauges) |
 
 🔒 = requires `Authorization: Bearer $ADMIN_TOKEN`. Admin endpoints are disabled
 (HTTP 403) until `ADMIN_TOKEN` is set.
@@ -186,6 +187,45 @@ A background `ExpiryWatcher` (or the cron-friendly `POST /admin/expiry/run`):
 Delivery goes through the `Notifier` interface (`src/notifications/notifier.ts`).
 The default `LoggerNotifier` just logs; swap in an email/SMS/push/webhook
 implementation in production — no other code changes required.
+
+## Monitoring & metrics
+
+`GET /metrics` exposes Prometheus metrics (dependency-free registry in
+`src/observability/metrics.ts`):
+
+- `vpn_http_requests_total{method,route,code}` and
+  `vpn_http_request_duration_ms{route}` (histogram) — auto-recorded by the
+  router, labelled by route **pattern** (not raw path) to keep cardinality low;
+- `vpn_orders{status}`, `vpn_refunds{status}`, `vpn_subscriptions_active` —
+  gauges recomputed at scrape time from the repositories.
+
+Point a Prometheus scraper at `/metrics`; restrict access via your network
+policy (it is intentionally unauthenticated for scrapers).
+
+## Billing emails (i18n)
+
+`src/notifications/emailTemplates.ts` renders localized billing emails
+(`payment_receipt`, `refund_notice`, `expiry_reminder`, `expired_notice`) in
+`zh-CN` and `en`, returning `{ subject, text, html }` (HTML values are escaped;
+unknown locales fall back to English). `TemplatedEmailNotifier` is a `Notifier`
+that turns expiry events into emails via an injectable `MailSender` and a
+`UserLookup` (email + preferred locale) — plug in SMTP/SES/etc. in production.
+
+## Sandbox / live integration scripts
+
+`scripts/` contains runnable CLIs that exercise the **real** provider APIs with
+your configured credentials:
+
+```bash
+npm run build
+USDT_RECEIVING_ADDRESS=<addr> npm run sandbox:usdt      # read-only TronGrid query
+ALIPAY_APP_ID=... ALIPAY_PRIVATE_KEY=... npm run sandbox:alipay   # precreate QR
+WECHAT_MCH_ID=... WECHAT_PRIVATE_KEY=... npm run sandbox:wechat   # native QR
+```
+
+Point `ALIPAY_GATEWAY` at the Alipay sandbox for safe testing. These make live
+outbound calls, so run them in an environment with network egress and valid
+credentials.
 
 ## Continuous integration
 

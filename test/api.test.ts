@@ -157,6 +157,24 @@ test('HTTP async refund callback finalises a PROCESSING refund', async () => {
   }
 });
 
+test('/metrics exposes Prometheus counters after requests', async () => {
+  const { base, server } = await startServer();
+  try {
+    await fetch(`${base}/healthz`);
+    await fetch(`${base}/api/plans`);
+    const res = await fetch(`${base}/metrics`);
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get('content-type') ?? '', /text\/plain/);
+    const body = await res.text();
+    assert.match(body, /# TYPE vpn_http_requests_total counter/);
+    assert.match(body, /vpn_http_requests_total\{[^}]*route="\/healthz"[^}]*\} \d+/);
+    assert.match(body, /# TYPE vpn_http_request_duration_ms histogram/);
+    assert.match(body, /# TYPE vpn_subscriptions_active gauge/);
+  } finally {
+    server.close();
+  }
+});
+
 test('idempotency-key header dedupes order creation over HTTP', async () => {
   const { base, server } = await startServer();
   try {
