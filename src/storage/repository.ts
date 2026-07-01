@@ -47,6 +47,12 @@ export interface SubscriptionRepository {
  */
 export interface ProcessedEventStore {
   markIfNew(eventId: string): Promise<boolean>;
+  /**
+   * Delete processed-event records older than `olderThanMs` (relative to now),
+   * bounding memory/table growth. Returns the number removed. Safe to run
+   * periodically; the dedupe window need only exceed a provider's retry window.
+   */
+  sweep(olderThanMs: number): Promise<number>;
 }
 
 /**

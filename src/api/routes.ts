@@ -10,6 +10,8 @@ import { UserService } from '../services/userService';
 import { ReconciliationService } from '../services/reconciliationService';
 import { AuditLog } from '../audit/auditLog';
 import { WebhookDispatcher, DeliveryStatus } from '../webhooks/outbound';
+import { PricingService } from '../pricing/pricingService';
+import { ProcessedEventStore } from '../storage/repository';
 import { buildOpenApiSpec } from './openapi';
 import { SWAGGER_UI_HTML } from './docsHtml';
 import { toPublicUser } from '../domain/user';
@@ -26,6 +28,9 @@ export interface ApiDeps {
   users: UserService;
   reconciliation: ReconciliationService;
   audit: AuditLog;
+  pricing: PricingService;
+  processedEvents: ProcessedEventStore;
+  processedEventTtlMs: number;
   plans: PlanCatalog;
   enabledMethods: PaymentMethod[];
   /** Bearer token guarding /admin. Undefined disables admin endpoints. */
@@ -141,6 +146,20 @@ export function buildRouter(deps: ApiDeps): Router {
     sendJson(res, 200, { plans, enabledMethods: deps.enabledMethods });
   });
 
+  // Convert an integer minor-unit amount between currencies at the current rate.
+  r.get('/api/pricing/quote', (ctx, res) => {
+    const amount = Number(ctx.query.get('amount'));
+    const from = ctx.query.get('from') ?? '';
+    const to = ctx.query.get('to') ?? '';
+    if (!Number.isInteger(amount) || amount < 0) throw new ValidationError('amount must be a non-negative integer (minor units)');
+    if (!from || !to) throw new ValidationError('from and to currencies are required');
+    try {
+      sendJson(res, 200, deps.pricing.quote(amount, from, to));
+    } catch (err) {
+      throw new ValidationError((err as Error).message);
+    }
+  });
+
   // ── Users / accounts ─────────────────────────────────────────────────────
   r.post('/api/users/register', async (ctx, res) => {
     const body = parseJsonBody(ctx);
@@ -253,6 +272,12 @@ export function buildRouter(deps: ApiDeps): Router {
   r.post('/internal/usdt/reconcile', async (_ctx, res) => {
     const settled = deps.usdtWatcher ? await deps.usdtWatcher.reconcileOnce() : 0;
     sendJson(res, 200, { settled });
+  });
+
+  // Sweep expired processed-event dedupe records (e.g. from cron).
+  r.post('/internal/maintenance/sweep', async (_ctx, res) => {
+    const removed = await deps.processedEvents.sweep(deps.processedEventTtlMs);
+    sendJson(res, 200, { removed });
   });
 
   // Drain due outbound webhook deliveries (e.g. from cron).

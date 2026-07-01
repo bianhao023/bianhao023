@@ -5,15 +5,16 @@ A commercial-grade payment backend for a VPN service, supporting **WeChat Pay**,
 dependencies** (only Node.js ≥ 20 built-ins: `crypto`, `http`, `fetch`), which
 keeps it auditable, easy to deploy, and free of payment-SDK supply-chain risk.
 
-> Status: builds clean (`tsc`, strict mode) and passes **151 automated tests**
-> covering signing, callbacks, the order state machine, idempotency, concurrency,
-> amount validation, USDT reconciliation, refunds (full/partial/manual and
-> asynchronous PROCESSING→final settlement), subscription expiry & notifications,
-> accounts (register/login/API-key auth), admin reporting, financial-consistency
-> reconciliation, an audit log (in-memory + SQL), outbound webhooks with
-> retry/dead-letter, an OpenAPI spec, Prometheus metrics, in-process & Redis rate
-> limiting, SMTP email delivery, localized billing emails, monitoring artifacts,
-> the SQL row mappers, and the HTTP API end-to-end.
+> Status: builds clean (`tsc`, strict mode) and passes **169 automated tests**
+> covering signing, callbacks, the order state machine, idempotency & dedupe
+> retention, concurrency, amount validation, USDT reconciliation, refunds
+> (full/partial/manual and asynchronous PROCESSING→final settlement), subscription
+> expiry & notifications, accounts (register/login/API-key auth), multi-currency
+> pricing, admin reporting, financial-consistency reconciliation, an audit log
+> (in-memory + SQL), outbound webhooks with retry/dead-letter, an OpenAPI spec,
+> Prometheus metrics, in-process & Redis rate limiting, SMTP email delivery,
+> localized billing emails, monitoring artifacts, the SQL row mappers, a full
+> end-to-end journey test, and the HTTP API end-to-end.
 
 ## Why one coherent codebase
 
@@ -90,6 +91,7 @@ run with any subset of WeChat / Alipay / USDT configured.
 | `GET /openapi.json` | OpenAPI 3.0.3 specification |
 | `GET /docs` | Swagger UI (interactive API docs) |
 | `GET /api/plans` | List VPN plans with prices |
+| `GET /api/pricing/quote` | Convert a minor-unit amount between currencies (`amount`,`from`,`to`) |
 | `POST /api/users/register` | Create an account. Body: `{ email, password, locale?, name? }` |
 | `POST /api/users/login` | Authenticate; returns the account's API key |
 | `GET /api/users/me` | Current account (auth: `Authorization: Bearer <apiKey>`) |
@@ -112,6 +114,7 @@ run with any subset of WeChat / Alipay / USDT configured.
 | `GET /admin/webhooks` | List outbound webhook deliveries (filter `status`) 🔒 |
 | `POST /admin/webhooks/{id}/retry` | Requeue a dead-lettered delivery 🔒 |
 | `POST /internal/webhooks/process` | Drain due webhook deliveries (cron) |
+| `POST /internal/maintenance/sweep` | Delete expired dedupe records (cron) |
 | `GET /metrics` | Prometheus metrics (HTTP + business gauges) |
 
 🔒 = requires `Authorization: Bearer $ADMIN_TOKEN`. Admin endpoints are disabled
@@ -212,6 +215,31 @@ npm run build
 LOAD_CONCURRENCY=50 LOAD_TOTAL=5000 npm run loadtest
 # or time-boxed: LOAD_DURATION_SEC=30 npm run loadtest
 ```
+
+## Multi-currency pricing
+
+`PricingService` (`src/pricing/`) converts integer minor-unit amounts between
+currencies using an injectable `ExchangeRateProvider` (a `StaticExchangeRateProvider`
+with a demo CNY-based rate table ships by default). Conversion is decimal-safe
+(handles differing decimal places, half-up rounding). Query it via
+`GET /api/pricing/quote?amount=<minor>&from=CNY&to=USDT`. Swap in a live
+rate-feed implementation of `ExchangeRateProvider` for production.
+
+## Idempotency & dedupe retention
+
+Payment callbacks and polled settlements are deduplicated by a
+`ProcessedEventStore`. Records now carry a timestamp and are swept past a
+retention window (`PROCESSED_EVENT_TTL_DAYS`, default 7) to bound growth — the
+window only needs to exceed a provider's retry window. The hourly maintenance
+tick sweeps automatically; `POST /internal/maintenance/sweep` triggers it from
+cron. The SQL store sweeps with `DELETE … WHERE created_at < cutoff`.
+
+## End-to-end smoke test
+
+`test/e2e.test.ts` boots the real HTTP server and walks the full journey —
+register → login → `/me` → create order → pay (callback) → verify fulfilled →
+refund → verify refunded → admin summary → audit log → metrics → OpenAPI —
+asserting each step. Runs as part of `npm test`.
 
 ## API documentation
 

@@ -176,12 +176,26 @@ export class MemorySubscriptionRepository implements SubscriptionRepository {
 }
 
 export class MemoryProcessedEventStore implements ProcessedEventStore {
-  private seen = new Set<string>();
+  private seen = new Map<string, number>();
+
+  constructor(private readonly now: () => number = Date.now) {}
 
   async markIfNew(eventId: string): Promise<boolean> {
     if (this.seen.has(eventId)) return false;
-    this.seen.add(eventId);
+    this.seen.set(eventId, this.now());
     return true;
+  }
+
+  async sweep(olderThanMs: number): Promise<number> {
+    const cutoff = this.now() - olderThanMs;
+    let removed = 0;
+    for (const [id, at] of this.seen) {
+      if (at < cutoff) {
+        this.seen.delete(id);
+        removed++;
+      }
+    }
+    return removed;
   }
 }
 

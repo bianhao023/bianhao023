@@ -18,7 +18,7 @@ async function getJson(res: Response): Promise<any> {
 function startServer(
   rateLimit: AppConfig['rateLimit'] = { enabled: false, max: 100, windowMs: 60_000 },
 ): Promise<{ base: string; server: Server; wechat: FakeProvider }> {
-  const config: AppConfig = { port: 0, orderTtlMinutes: 15, enabledMethods: [], expiryReminderDays: 3, rateLimit };
+  const config: AppConfig = { port: 0, orderTtlMinutes: 15, enabledMethods: [], expiryReminderDays: 3, processedEventTtlDays: 7, rateLimit };
   const wechat = new FakeProvider('wechat');
   const providers = new Map<PaymentMethod, PaymentProvider>([['wechat', wechat]]);
   const container = buildContainer(config, { providers });
@@ -190,6 +190,34 @@ test('rate limiting returns 429 with Retry-After after the limit', async () => {
     // Exempt routes are never limited.
     assert.equal((await fetch(`${base}/healthz`)).status, 200);
     assert.equal((await fetch(`${base}/metrics`)).status, 200);
+  } finally {
+    server.close();
+  }
+});
+
+test('pricing quote converts between currencies and validates input', async () => {
+  const { base, server } = await startServer();
+  try {
+    const q = await getJson(await fetch(`${base}/api/pricing/quote?amount=100000&from=CNY&to=USDT`));
+    assert.equal(q.currency, 'USDT');
+    assert.ok(Number.isInteger(q.amountMinor) && q.amountMinor > 0);
+    assert.ok(typeof q.amountDisplay === 'string');
+    assert.ok(q.rate > 0);
+
+    assert.equal((await fetch(`${base}/api/pricing/quote?amount=-5&from=CNY&to=USDT`)).status, 400);
+    assert.equal((await fetch(`${base}/api/pricing/quote?amount=100&from=CNY`)).status, 400);
+    assert.equal((await fetch(`${base}/api/pricing/quote?amount=100&from=CNY&to=ZZZ`)).status, 400);
+  } finally {
+    server.close();
+  }
+});
+
+test('maintenance sweep endpoint returns a removed count', async () => {
+  const { base, server } = await startServer();
+  try {
+    const res = await fetch(`${base}/internal/maintenance/sweep`, { method: 'POST' });
+    assert.equal(res.status, 200);
+    assert.equal(typeof (await getJson(res)).removed, 'number');
   } finally {
     server.close();
   }

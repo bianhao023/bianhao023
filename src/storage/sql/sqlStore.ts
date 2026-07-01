@@ -219,13 +219,22 @@ export class SqlSubscriptionRepository implements SubscriptionRepository {
  * application instances an event is processed exactly once.
  */
 export class SqlProcessedEventStore implements ProcessedEventStore {
-  constructor(private readonly db: SqlClient) {}
+  constructor(
+    private readonly db: SqlClient,
+    private readonly now: () => number = Date.now,
+  ) {}
 
   async markIfNew(eventId: string): Promise<boolean> {
     const res = await this.db.query(
-      'INSERT INTO processed_events (event_id) VALUES ($1) ON CONFLICT (event_id) DO NOTHING',
-      [eventId],
+      'INSERT INTO processed_events (event_id, created_at) VALUES ($1, $2) ON CONFLICT (event_id) DO NOTHING',
+      [eventId, this.now()],
     );
     return (res.rowCount ?? 0) > 0;
+  }
+
+  async sweep(olderThanMs: number): Promise<number> {
+    const cutoff = this.now() - olderThanMs;
+    const res = await this.db.query('DELETE FROM processed_events WHERE created_at < $1', [cutoff]);
+    return res.rowCount ?? 0;
   }
 }

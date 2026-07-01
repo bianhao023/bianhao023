@@ -33,6 +33,8 @@ import { ReconciliationService } from './services/reconciliationService';
 import { AuditLog, InMemoryAuditLog } from './audit/auditLog';
 import { WebhookDispatcher, MemoryWebhookRepository, OutboundEmitter } from './webhooks/outbound';
 import { WebhookWatcher } from './webhooks/webhookWatcher';
+import { PricingService } from './pricing/pricingService';
+import { StaticExchangeRateProvider, DEMO_RATES_FROM_CNY } from './pricing/exchangeRates';
 import { LoggerNotifier, Notifier } from './notifications/notifier';
 import { TemplatedEmailNotifier } from './notifications/emailNotifier';
 import { SmtpMailSender } from './notifications/smtpMailSender';
@@ -69,6 +71,8 @@ export interface Container {
   users: UserService;
   reconciliation: ReconciliationService;
   audit: AuditLog;
+  pricing: PricingService;
+  processedEvents: ProcessedEventStore;
   plans: PlanCatalog;
   metrics: Metrics;
   routerMetrics: RouterMetrics;
@@ -82,14 +86,14 @@ export interface Container {
 /** Wire the whole system together from configuration (and optional overrides). */
 export function buildContainer(config: AppConfig, overrides: ContainerOverrides = {}): Container {
   const http = overrides.httpClient ?? new FetchHttpClient();
+  const now = overrides.now ?? Date.now;
   const orders = overrides.orders ?? new MemoryOrderRepository();
   const refundsRepo = overrides.refunds ?? new MemoryRefundRepository();
   const subscriptionsRepo = overrides.subscriptions ?? new MemorySubscriptionRepository();
-  const processedEvents = overrides.processedEvents ?? new MemoryProcessedEventStore();
+  const processedEvents = overrides.processedEvents ?? new MemoryProcessedEventStore(now);
   const usersRepo = overrides.users ?? new MemoryUserRepository();
   const locker = overrides.locker ?? new InProcessLocker();
   const plans = overrides.plans ?? new PlanCatalog();
-  const now = overrides.now ?? Date.now;
   const audit = overrides.audit ?? new InMemoryAuditLog(now);
 
   // Outbound merchant webhooks (optional). When configured, business events are
@@ -149,6 +153,7 @@ export function buildContainer(config: AppConfig, overrides: ContainerOverrides 
 
   const reports = new ReportService(orders, refundsRepo);
   const reconciliation = new ReconciliationService(orders, refundsRepo, () => payments.expireStaleOrders(), now);
+  const pricing = new PricingService(new StaticExchangeRateProvider('CNY', DEMO_RATES_FROM_CNY));
 
   // With SMTP configured we can close the loop: expiry notifications become
   // localized emails addressed via the user directory. Otherwise just log.
@@ -167,7 +172,9 @@ export function buildContainer(config: AppConfig, overrides: ContainerOverrides 
     reminderWindowMs: config.expiryReminderDays * 24 * 60 * 60 * 1000,
     now,
   });
-  const expiryWatcher = new ExpiryWatcher(expiry);
+  // Periodic maintenance: sweep dedupe records past their retention window.
+  const processedEventTtlMs = config.processedEventTtlDays * 24 * 60 * 60 * 1000;
+  const expiryWatcher = new ExpiryWatcher(expiry, 3_600_000, () => processedEvents.sweep(processedEventTtlMs));
 
   if (providers.has('usdt')) {
     usdtWatcher = new UsdtWatcher(orders, payments);
@@ -211,7 +218,7 @@ export function buildContainer(config: AppConfig, overrides: ContainerOverrides 
 
   return {
     config, orders, payments, refunds, reports, expiry, expiryWatcher, users,
-    reconciliation, audit, plans,
+    reconciliation, audit, pricing, processedEvents, plans,
     metrics, routerMetrics, rateLimit, usdtWatcher, webhooks, webhookWatcher, enabledMethods,
   };
 }

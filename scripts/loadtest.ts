@@ -77,6 +77,7 @@ function buildLoadConfig(): AppConfig {
     orderTtlMinutes: 15,
     enabledMethods: [], // provider map (below) enables 'wechat'
     expiryReminderDays: 3,
+    processedEventTtlDays: 7,
     rateLimit: { enabled: false, max: 100000, windowMs: 60_000 },
   };
 }

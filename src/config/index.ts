@@ -84,6 +84,8 @@ export interface AppConfig {
   adminToken?: string;
   /** Days before expiry to send a renewal reminder. */
   expiryReminderDays: number;
+  /** Days to retain processed-event dedupe records before cleanup. */
+  processedEventTtlDays: number;
   rateLimit: RateLimitConfig;
   wechat?: WechatConfig;
   alipay?: AlipayConfig;
@@ -174,6 +176,7 @@ export function loadConfig(): AppConfig {
     enabledMethods: enabled,
     adminToken: env('ADMIN_TOKEN') || undefined,
     expiryReminderDays: Number(env('EXPIRY_REMINDER_DAYS', '3')),
+    processedEventTtlDays: Number(env('PROCESSED_EVENT_TTL_DAYS', '7')),
     rateLimit: {
       enabled: env('RATE_LIMIT_ENABLED', 'true') !== 'false',
       max: Number(env('RATE_LIMIT_MAX', '100')),
