@@ -5,7 +5,11 @@ import { uuid } from '../utils/ids';
 import { logger } from '../utils/logger';
 
 /** Business events published to a merchant's webhook endpoint. */
-export type OutboundEventType = 'order.fulfilled' | 'order.refunded' | 'refund.updated';
+export type OutboundEventType =
+  | 'order.fulfilled'
+  | 'order.refunded'
+  | 'refund.updated'
+  | 'reconciliation.alert';
 
 export interface OutboundEvent {
   id: string;

@@ -33,6 +33,8 @@ import { ReconciliationService } from './services/reconciliationService';
 import { AuditLog, InMemoryAuditLog } from './audit/auditLog';
 import { WebhookDispatcher, MemoryWebhookRepository, OutboundEmitter } from './webhooks/outbound';
 import { WebhookWatcher } from './webhooks/webhookWatcher';
+import { Alert } from './alerting/alertFormatter';
+import { logger } from './utils/logger';
 import { PricingService } from './pricing/pricingService';
 import { StaticExchangeRateProvider, DEMO_RATES_FROM_CNY, ExchangeRateProvider } from './pricing/exchangeRates';
 import { CachingExchangeRateProvider, HttpRateFeed } from './pricing/cachingExchangeRates';
@@ -74,6 +76,8 @@ export interface Container {
   reconciliation: ReconciliationService;
   audit: AuditLog;
   pricing: PricingService;
+  /** Dispatches an alert to the log and (when configured) the outbound webhook. */
+  alertSink: (alert: Alert) => Promise<void>;
   /** Present only when a live FX feed is configured; call start()/stop() to refresh. */
   fxProvider?: CachingExchangeRateProvider;
   processedEvents: ProcessedEventStore;
@@ -173,6 +177,16 @@ export function buildContainer(config: AppConfig, overrides: ContainerOverrides 
   }
   const pricing = new PricingService(ratesProvider);
 
+  // Alert dispatch: always log; also publish to the merchant webhook if wired.
+  const alertSink = async (alert: Alert): Promise<void> => {
+    const meta = { title: alert.title, summary: alert.summary, details: alert.details };
+    if (alert.severity === 'critical') logger.error('alert', meta);
+    else logger.warn('alert', meta);
+    if (webhooks) {
+      await webhooks.emit('reconciliation.alert', { ...alert });
+    }
+  };
+
   // With SMTP configured we can close the loop: expiry notifications become
   // localized emails addressed via the user directory. Otherwise just log.
   const notifier: Notifier =
@@ -238,7 +252,7 @@ export function buildContainer(config: AppConfig, overrides: ContainerOverrides 
 
   return {
     config, orders, payments, refunds, reports, expiry, expiryWatcher, users,
-    reconciliation, audit, pricing, fxProvider, processedEvents, plans,
+    reconciliation, audit, pricing, alertSink, fxProvider, processedEvents, plans,
     metrics, routerMetrics, rateLimit, security, usdtWatcher, webhooks, webhookWatcher, enabledMethods,
   };
 }

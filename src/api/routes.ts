@@ -13,6 +13,7 @@ import { WebhookDispatcher, DeliveryStatus } from '../webhooks/outbound';
 import { PricingService } from '../pricing/pricingService';
 import { ProcessedEventStore } from '../storage/repository';
 import { ordersToCsv, refundsToCsv } from '../reporting/csv';
+import { formatReconciliationAlert, Alert } from '../alerting/alertFormatter';
 import { buildOpenApiSpec } from './openapi';
 import { SWAGGER_UI_HTML } from './docsHtml';
 import { toPublicUser } from '../domain/user';
@@ -30,6 +31,7 @@ export interface ApiDeps {
   reconciliation: ReconciliationService;
   audit: AuditLog;
   pricing: PricingService;
+  alertSink: (alert: Alert) => Promise<void>;
   processedEvents: ProcessedEventStore;
   processedEventTtlMs: number;
   plans: PlanCatalog;
@@ -343,7 +345,10 @@ export function buildRouter(deps: ApiDeps): Router {
   r.post('/admin/reconciliation', async (ctx, res) => {
     await adminGuard(ctx, deps);
     const report = await deps.reconciliation.run({ heal: ctx.query.get('heal') === 'true' });
-    sendJson(res, 200, report);
+    // Fire an alert (log + webhook) when discrepancies are found.
+    const alert = formatReconciliationAlert(report);
+    if (alert) await deps.alertSink(alert);
+    sendJson(res, 200, { ...report, alert: alert ?? null });
   });
 
   // List outbound webhook deliveries (optionally by status), for DLQ inspection.

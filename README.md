@@ -5,7 +5,7 @@ A commercial-grade payment backend for a VPN service, supporting **WeChat Pay**,
 dependencies** (only Node.js ≥ 20 built-ins: `crypto`, `http`, `fetch`), which
 keeps it auditable, easy to deploy, and free of payment-SDK supply-chain risk.
 
-> Status: builds clean (`tsc`, strict mode) and passes **194 automated tests**
+> Status: builds clean (`tsc`, strict mode) and passes **203 automated tests**
 > covering signing, callbacks, the order state machine, idempotency & dedupe
 > retention, concurrency, amount validation, USDT reconciliation, refunds
 > (full/partial/manual and asynchronous PROCESSING→final settlement), subscription
@@ -282,6 +282,11 @@ every endpoint with schemas, tags, and the `bearerAuth` security scheme.
   refunds — flagging paid-but-unfulfilled, fulfilled-without-payment,
   over-refund, refund-ledger drift, and stale-pending orders. It is read-only
   unless `?heal=true`, which expires stale pending orders. Drive it from cron.
+- **Alerting** (`src/alerting/alertFormatter.ts`): when a reconciliation run
+  finds discrepancies, the result is formatted into an `Alert` (severity
+  `critical` for money/state inconsistencies, `warning` for drift) and
+  dispatched via `alertSink` — always logged, and published to the merchant
+  webhook as a `reconciliation.alert` event when one is configured.
 
 ## Reconciliation & reporting
 

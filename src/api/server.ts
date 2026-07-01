@@ -13,6 +13,7 @@ export function createHttpServer(container: Container): Server {
     reconciliation: container.reconciliation,
     audit: container.audit,
     pricing: container.pricing,
+    alertSink: container.alertSink,
     processedEvents: container.processedEvents,
     processedEventTtlMs: container.config.processedEventTtlDays * 24 * 60 * 60 * 1000,
     plans: container.plans,
