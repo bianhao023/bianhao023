@@ -207,4 +207,10 @@ export class WebhookDispatcher implements OutboundEmitter {
   list(status: DeliveryStatus | undefined, limit: number, offset: number) {
     return this.repo.list(status, limit, offset);
   }
+
+  /** Current dead-letter depth and a sample of delivery ids (for alerting). */
+  async deadLetterSummary(sampleSize = 20): Promise<{ count: number; sampleIds: string[] }> {
+    const { total, items } = await this.repo.list('dead', sampleSize, 0);
+    return { count: total, sampleIds: items.map((d) => d.id) };
+  }
 }

@@ -2,6 +2,7 @@ import { IncomingMessage, ServerResponse } from 'node:http';
 import { AppError } from '../domain/errors';
 import { Counter, Histogram } from '../observability/metrics';
 import { RateLimiterLike } from './rateLimiter';
+import { API_VERSION } from '../version';
 import { logger } from '../utils/logger';
 
 /** Optional request-level instrumentation for the router. */
@@ -105,6 +106,7 @@ export class Router {
 
   /** Set security response headers and CORS allow-origin for the request. */
   private applySecurityHeaders(res: ServerResponse, origin?: string): void {
+    res.setHeader('X-API-Version', API_VERSION);
     const sec = this.security;
     if (!sec) return;
     if (sec.securityHeaders) {

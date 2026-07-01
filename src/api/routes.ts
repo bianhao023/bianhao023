@@ -14,6 +14,7 @@ import { PricingService } from '../pricing/pricingService';
 import { ProcessedEventStore } from '../storage/repository';
 import { ordersToCsv, refundsToCsv } from '../reporting/csv';
 import { formatReconciliationAlert, Alert } from '../alerting/alertFormatter';
+import { APP_VERSION, API_VERSION, SUPPORTED_API_VERSIONS } from '../version';
 import { buildOpenApiSpec } from './openapi';
 import { SWAGGER_UI_HTML } from './docsHtml';
 import { toPublicUser } from '../domain/user';
@@ -133,6 +134,10 @@ export function buildRouter(deps: ApiDeps): Router {
 
   r.get('/healthz', (_ctx, res) => {
     sendJson(res, 200, { status: 'ok', methods: deps.enabledMethods });
+  });
+
+  r.get('/version', (_ctx, res) => {
+    sendJson(res, 200, { app: APP_VERSION, api: API_VERSION, supported: SUPPORTED_API_VERSIONS });
   });
 
   // Prometheus scrape endpoint (kept open for scrapers; restrict via network policy).

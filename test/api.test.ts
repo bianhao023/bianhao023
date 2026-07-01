@@ -195,6 +195,24 @@ test('rate limiting returns 429 with Retry-After after the limit', async () => {
   }
 });
 
+test('version endpoint and X-API-Version header', async () => {
+  const { base, server } = await startServer();
+  try {
+    const res = await fetch(`${base}/version`);
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('x-api-version'), 'v1');
+    const body = await getJson(res);
+    assert.equal(body.api, 'v1');
+    assert.ok(typeof body.app === 'string');
+    assert.deepEqual(body.supported, ['v1']);
+
+    // The version header is applied to every response.
+    assert.equal((await fetch(`${base}/healthz`)).headers.get('x-api-version'), 'v1');
+  } finally {
+    server.close();
+  }
+});
+
 test('security headers and CORS are applied; OPTIONS is preflighted', async () => {
   const { base, server } = await startServer(); // default security has corsOrigins ['*']
   try {
