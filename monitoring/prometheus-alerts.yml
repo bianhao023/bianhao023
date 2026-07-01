@@ -1,0 +1,54 @@
+# Prometheus alerting rules for the VPN payment backend.
+# Load via prometheus.yml: rule_files: ['prometheus-alerts.yml']
+# Validate with: promtool check rules prometheus-alerts.yml
+groups:
+  - name: vpn-payment
+    rules:
+      - alert: HighHttp5xxRate
+        expr: |
+          sum(rate(vpn_http_requests_total{code=~"5.."}[5m]))
+            / clamp_min(sum(rate(vpn_http_requests_total[5m])), 1) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High 5xx error rate on the payment backend"
+          description: "More than 5% of HTTP responses are 5xx over the last 5 minutes."
+
+      - alert: HighRequestLatencyP95
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(vpn_http_request_duration_ms_bucket[5m])) by (le)) > 1000
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "p95 request latency above 1s"
+          description: "The 95th percentile HTTP latency has exceeded 1000ms for 10 minutes."
+
+      - alert: RateLimitingSpike
+        expr: sum(rate(vpn_rate_limited_total[5m])) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Sustained rate limiting"
+          description: "Requests are being rate-limited, which may indicate abuse or misconfiguration."
+
+      - alert: PendingOrdersBacklog
+        expr: vpn_orders{status="PENDING"} > 100
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Large backlog of pending orders"
+          description: "More than 100 orders have been stuck in PENDING for 15 minutes; check payment callbacks."
+
+      - alert: PaymentBackendDown
+        expr: up{job="vpn-payment"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Payment backend is not being scraped"
+          description: "Prometheus cannot scrape the payment backend /metrics endpoint."

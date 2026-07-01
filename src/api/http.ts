@@ -1,12 +1,26 @@
 import { IncomingMessage, ServerResponse } from 'node:http';
 import { AppError } from '../domain/errors';
 import { Counter, Histogram } from '../observability/metrics';
+import { RateLimiter } from './rateLimiter';
 import { logger } from '../utils/logger';
 
 /** Optional request-level instrumentation for the router. */
 export interface RouterMetrics {
   requests: Counter; // labels: method, route, code
   duration: Histogram; // labels: route (milliseconds)
+  rateLimited?: Counter; // labels: route
+}
+
+/** Optional rate-limiting configuration for the router. */
+export interface RateLimitOptions {
+  limiter: RateLimiter;
+  /** Route patterns exempt from limiting (e.g. /healthz, /metrics). */
+  skipRoutes: Set<string>;
+}
+
+export interface RouterOptions {
+  metrics?: RouterMetrics;
+  rateLimit?: RateLimitOptions;
 }
 
 export interface ReqContext {
@@ -32,8 +46,13 @@ interface Route {
 /** Tiny dependency-free router with path params and centralised error handling. */
 export class Router {
   private routes: Route[] = [];
+  private readonly metrics?: RouterMetrics;
+  private readonly rateLimit?: RateLimitOptions;
 
-  constructor(private readonly metrics?: RouterMetrics) {}
+  constructor(opts: RouterOptions = {}) {
+    this.metrics = opts.metrics;
+    this.rateLimit = opts.rateLimit;
+  }
 
   add(method: string, pattern: string, handler: Handler): this {
     this.routes.push({
@@ -120,6 +139,22 @@ export class Router {
     for (const [k, v] of Object.entries(req.headers)) {
       headers[k.toLowerCase()] = Array.isArray(v) ? v.join(',') : (v ?? '');
     }
+
+    // Rate limiting (per client IP + route), unless the route is exempt.
+    if (this.rateLimit && !this.rateLimit.skipRoutes.has(routeLabel)) {
+      const ip = clientIp(req, headers);
+      const decision = this.rateLimit.limiter.check(`${ip}|${routeLabel}`);
+      res.setHeader('X-RateLimit-Limit', String(decision.limit));
+      res.setHeader('X-RateLimit-Remaining', String(decision.remaining));
+      res.setHeader('X-RateLimit-Reset', String(Math.ceil(decision.resetAt / 1000)));
+      if (!decision.allowed) {
+        res.setHeader('Retry-After', String(decision.retryAfterSec));
+        sendJson(res, 429, { error: 'RATE_LIMITED', message: 'too many requests' });
+        this.metrics?.rateLimited?.inc({ route: routeLabel });
+        record();
+        return;
+      }
+    }
     const ctx: ReqContext = {
       method: httpMethod,
       path: url.pathname,
@@ -141,6 +176,13 @@ export class Router {
       record();
     }
   }
+}
+
+/** Best-effort client IP: first X-Forwarded-For hop, else the socket address. */
+export function clientIp(req: IncomingMessage, headers: Record<string, string>): string {
+  const xff = headers['x-forwarded-for'];
+  if (xff) return xff.split(',')[0].trim();
+  return req.socket.remoteAddress ?? 'unknown';
 }
 
 export function sendJson(res: ServerResponse, status: number, body: unknown): void {

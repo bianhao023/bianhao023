@@ -5,12 +5,13 @@ A commercial-grade payment backend for a VPN service, supporting **WeChat Pay**,
 dependencies** (only Node.js ≥ 20 built-ins: `crypto`, `http`, `fetch`), which
 keeps it auditable, easy to deploy, and free of payment-SDK supply-chain risk.
 
-> Status: builds clean (`tsc`, strict mode) and passes **90 automated tests**
+> Status: builds clean (`tsc`, strict mode) and passes **101 automated tests**
 > covering signing, callbacks, the order state machine, idempotency, concurrency,
 > amount validation, USDT reconciliation, refunds (full/partial/manual and
 > asynchronous PROCESSING→final settlement), subscription expiry & notifications,
-> admin reporting/reconciliation, Prometheus metrics, localized billing emails,
-> the SQL row mappers, and the HTTP API end-to-end.
+> admin reporting/reconciliation, Prometheus metrics, rate limiting, SMTP email
+> delivery, localized billing emails, monitoring artifacts, the SQL row mappers,
+> and the HTTP API end-to-end.
 
 ## Why one coherent codebase
 
@@ -201,6 +202,42 @@ implementation in production — no other code changes required.
 
 Point a Prometheus scraper at `/metrics`; restrict access via your network
 policy (it is intentionally unauthenticated for scrapers).
+
+Ready-to-use dashboards and alerts live in `monitoring/`:
+
+- `monitoring/grafana-dashboard.json` — import into Grafana (request rate, 5xx
+  ratio, p95 latency, orders by status, active subscriptions, refunds, rate
+  limiting).
+- `monitoring/prometheus-alerts.yml` — alert rules (high 5xx rate, high p95
+  latency, sustained rate limiting, pending-order backlog, scrape-down).
+
+## Rate limiting
+
+A fixed-window limiter (`src/api/rateLimiter.ts`) caps requests per client IP +
+route. Over-limit requests get `429` with `Retry-After` and `X-RateLimit-*`
+headers; `/healthz` and `/metrics` are exempt. Configure with `RATE_LIMIT_*`
+(disable via `RATE_LIMIT_ENABLED=false`). Rejections are counted in
+`vpn_rate_limited_total{route}`. The in-process limiter suits a single node; for
+a cluster, back the same interface with Redis.
+
+## Outbound email (SMTP)
+
+`SmtpMailSender` (`src/notifications/smtpMailSender.ts`) is a dependency-free
+SMTP client (EHLO, optional AUTH LOGIN, direct-TLS or plaintext) that sends the
+localized MIME emails. Wire it into the expiry notifier with your own user
+lookup (the app does not store user emails itself):
+
+```ts
+import { SmtpMailSender } from './notifications/smtpMailSender';
+import { TemplatedEmailNotifier } from './notifications/emailNotifier';
+
+const notifier = new TemplatedEmailNotifier({
+  sender: new SmtpMailSender(config.smtp!),
+  plans,
+  users: async (userId) => myUserDirectory.lookup(userId), // { email, locale, name }
+});
+const container = buildContainer(config, { notifier });
+```
 
 ## Billing emails (i18n)
 

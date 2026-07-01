@@ -14,6 +14,7 @@ export function createHttpServer(container: Container): Server {
     adminToken: container.config.adminToken,
     metrics: container.metrics,
     routerMetrics: container.routerMetrics,
+    rateLimit: container.rateLimit,
     usdtWatcher: container.usdtWatcher,
   });
   return createServer((req, res) => router.handle(req, res));

@@ -9,7 +9,7 @@ import { ExpiryService } from '../services/expiryService';
 import { PlanCatalog } from '../services/plans';
 import { UsdtWatcher } from '../services/usdtWatcher';
 import { Metrics } from '../observability/metrics';
-import { parseJsonBody, Router, RouterMetrics, sendJson, sendRaw, ReqContext } from './http';
+import { parseJsonBody, Router, RouterMetrics, RateLimitOptions, sendJson, sendRaw, ReqContext } from './http';
 
 export interface ApiDeps {
   payments: PaymentService;
@@ -22,6 +22,7 @@ export interface ApiDeps {
   adminToken?: string;
   metrics?: Metrics;
   routerMetrics?: RouterMetrics;
+  rateLimit?: RateLimitOptions;
   usdtWatcher?: UsdtWatcher;
 }
 
@@ -96,7 +97,7 @@ function reportFilter(q: URLSearchParams): ReportFilter {
 }
 
 export function buildRouter(deps: ApiDeps): Router {
-  const r = new Router(deps.routerMetrics);
+  const r = new Router({ metrics: deps.routerMetrics, rateLimit: deps.rateLimit });
 
   r.get('/healthz', (_ctx, res) => {
     sendJson(res, 200, { status: 'ok', methods: deps.enabledMethods });

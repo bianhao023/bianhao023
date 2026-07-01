@@ -15,8 +15,10 @@ async function getJson(res: Response): Promise<any> {
   return (await res.json()) as any;
 }
 
-function startServer(): Promise<{ base: string; server: Server; wechat: FakeProvider }> {
-  const config: AppConfig = { port: 0, orderTtlMinutes: 15, enabledMethods: [], expiryReminderDays: 3 };
+function startServer(
+  rateLimit: AppConfig['rateLimit'] = { enabled: false, max: 100, windowMs: 60_000 },
+): Promise<{ base: string; server: Server; wechat: FakeProvider }> {
+  const config: AppConfig = { port: 0, orderTtlMinutes: 15, enabledMethods: [], expiryReminderDays: 3, rateLimit };
   const wechat = new FakeProvider('wechat');
   const providers = new Map<PaymentMethod, PaymentProvider>([['wechat', wechat]]);
   const container = buildContainer(config, { providers });
@@ -170,6 +172,24 @@ test('/metrics exposes Prometheus counters after requests', async () => {
     assert.match(body, /vpn_http_requests_total\{[^}]*route="\/healthz"[^}]*\} \d+/);
     assert.match(body, /# TYPE vpn_http_request_duration_ms histogram/);
     assert.match(body, /# TYPE vpn_subscriptions_active gauge/);
+  } finally {
+    server.close();
+  }
+});
+
+test('rate limiting returns 429 with Retry-After after the limit', async () => {
+  const { base, server } = await startServer({ enabled: true, max: 2, windowMs: 60_000 });
+  try {
+    assert.equal((await fetch(`${base}/api/plans`)).status, 200);
+    assert.equal((await fetch(`${base}/api/plans`)).status, 200);
+    const limited = await fetch(`${base}/api/plans`);
+    assert.equal(limited.status, 429);
+    assert.ok(Number(limited.headers.get('retry-after')) >= 1);
+    assert.equal(limited.headers.get('x-ratelimit-limit'), '2');
+
+    // Exempt routes are never limited.
+    assert.equal((await fetch(`${base}/healthz`)).status, 200);
+    assert.equal((await fetch(`${base}/metrics`)).status, 200);
   } finally {
     server.close();
   }

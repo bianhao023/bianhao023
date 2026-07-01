@@ -7,7 +7,7 @@ import { PaymentProvider } from '../src/providers/provider';
 import { FakeProvider, callbackBody } from './_helpers';
 
 function baseConfig(): AppConfig {
-  return { port: 0, orderTtlMinutes: 15, enabledMethods: [], expiryReminderDays: 3 };
+  return { port: 0, orderTtlMinutes: 15, enabledMethods: [], expiryReminderDays: 3, rateLimit: { enabled: false, max: 100, windowMs: 60000 } };
 }
 
 async function harness() {

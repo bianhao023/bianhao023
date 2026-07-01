@@ -45,6 +45,26 @@ export interface UsdtConfig {
   uniqueAmountMaxDelta: number;
 }
 
+/** Fixed-window rate limiting configuration. */
+export interface RateLimitConfig {
+  enabled: boolean;
+  /** Max requests per window per client+route. */
+  max: number;
+  windowMs: number;
+}
+
+/** SMTP configuration for outbound billing emails. */
+export interface SmtpConfig {
+  host: string;
+  port: number;
+  /** true => connect over TLS directly (e.g. port 465). */
+  secure: boolean;
+  user?: string;
+  pass?: string;
+  /** Envelope + header From address. */
+  from: string;
+}
+
 export interface AppConfig {
   port: number;
   /** Minutes a pending order stays payable before EXPIRED. */
@@ -54,9 +74,11 @@ export interface AppConfig {
   adminToken?: string;
   /** Days before expiry to send a renewal reminder. */
   expiryReminderDays: number;
+  rateLimit: RateLimitConfig;
   wechat?: WechatConfig;
   alipay?: AlipayConfig;
   usdt?: UsdtConfig;
+  smtp?: SmtpConfig;
 }
 
 const CANONICAL_USDT_TRC20 = 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t';
@@ -114,15 +136,33 @@ export function loadConfig(): AppConfig {
     enabled.push('usdt');
   }
 
+  let smtp: SmtpConfig | undefined;
+  if (env('SMTP_HOST')) {
+    smtp = {
+      host: env('SMTP_HOST'),
+      port: Number(env('SMTP_PORT', '587')),
+      secure: env('SMTP_SECURE', 'false') === 'true',
+      user: env('SMTP_USER') || undefined,
+      pass: env('SMTP_PASS') || undefined,
+      from: env('SMTP_FROM', 'no-reply@example.com'),
+    };
+  }
+
   return {
     port: Number(env('PORT', '3000')),
     orderTtlMinutes: Number(env('ORDER_TTL_MINUTES', '15')),
     enabledMethods: enabled,
     adminToken: env('ADMIN_TOKEN') || undefined,
     expiryReminderDays: Number(env('EXPIRY_REMINDER_DAYS', '3')),
+    rateLimit: {
+      enabled: env('RATE_LIMIT_ENABLED', 'true') !== 'false',
+      max: Number(env('RATE_LIMIT_MAX', '100')),
+      windowMs: Number(env('RATE_LIMIT_WINDOW_SEC', '60')) * 1000,
+    },
     wechat,
     alipay,
     usdt,
+    smtp,
   };
 }
 
