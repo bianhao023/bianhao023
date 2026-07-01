@@ -16,7 +16,7 @@ async function getJson(res: Response): Promise<any> {
 }
 
 function start(adminToken?: string): Promise<{ base: string; server: Server }> {
-  const config: AppConfig = { port: 0, orderTtlMinutes: 15, enabledMethods: [], expiryReminderDays: 3, processedEventTtlDays: 7, adminToken, rateLimit: { enabled: false, max: 100, windowMs: 60000 } };
+  const config: AppConfig = { port: 0, orderTtlMinutes: 15, enabledMethods: [], expiryReminderDays: 3, processedEventTtlDays: 7, adminToken, rateLimit: { enabled: false, max: 100, windowMs: 60000 }, security: { corsOrigins: [], requestTimeoutMs: 15000, maxBodyBytes: 1000000, securityHeaders: true } };
   const providers = new Map<PaymentMethod, PaymentProvider>([['wechat', new FakeProvider('wechat')]]);
   const container = buildContainer(config, { providers });
   const server = createHttpServer(container);
@@ -107,6 +107,29 @@ test('business events are recorded and queryable via /admin/audit', async () => 
     const filtered = await getJson(await fetch(`${base}/admin/audit?action=order.fulfilled`, { headers: auth }));
     assert.ok(filtered.total >= 1);
     assert.ok(filtered.items.every((e: any) => e.action === 'order.fulfilled'));
+  } finally {
+    server.close();
+  }
+});
+
+test('CSV exports return text/csv with headers and rows', async () => {
+  const { base, server } = await start(TOKEN);
+  try {
+    await seedPaidOrder(base);
+    const auth = { Authorization: `Bearer ${TOKEN}` };
+
+    const ordersRes = await fetch(`${base}/admin/orders.csv`, { headers: auth });
+    assert.equal(ordersRes.status, 200);
+    assert.match(ordersRes.headers.get('content-type') ?? '', /text\/csv/);
+    const ordersCsv = await ordersRes.text();
+    assert.match(ordersCsv.split('\r\n')[0], /^id,outTradeNo,userId/);
+    assert.ok(ordersCsv.split('\r\n').length >= 2);
+
+    const refundsRes = await fetch(`${base}/admin/refunds.csv`, { headers: auth });
+    assert.equal(refundsRes.status, 200);
+    assert.match((await refundsRes.text()).split('\r\n')[0], /^id,orderId,outRefundNo/);
+
+    assert.equal((await fetch(`${base}/admin/orders.csv`)).status, 401); // still protected
   } finally {
     server.close();
   }

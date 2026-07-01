@@ -78,7 +78,7 @@ function buildLoadConfig(): AppConfig {
     enabledMethods: [], // provider map (below) enables 'wechat'
     expiryReminderDays: 3,
     processedEventTtlDays: 7,
-    rateLimit: { enabled: false, max: 100000, windowMs: 60_000 },
+    rateLimit: { enabled: false, max: 100000, windowMs: 60_000 }, security: { corsOrigins: [], requestTimeoutMs: 15000, maxBodyBytes: 1000000, securityHeaders: true },
   };
 }
 

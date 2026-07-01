@@ -18,7 +18,7 @@ async function getJson(res: Response): Promise<any> {
 function startServer(
   rateLimit: AppConfig['rateLimit'] = { enabled: false, max: 100, windowMs: 60_000 },
 ): Promise<{ base: string; server: Server; wechat: FakeProvider }> {
-  const config: AppConfig = { port: 0, orderTtlMinutes: 15, enabledMethods: [], expiryReminderDays: 3, processedEventTtlDays: 7, rateLimit };
+  const config: AppConfig = { port: 0, orderTtlMinutes: 15, enabledMethods: [], expiryReminderDays: 3, processedEventTtlDays: 7, rateLimit, security: { corsOrigins: ['*'], requestTimeoutMs: 15000, maxBodyBytes: 1000000, securityHeaders: true } };
   const wechat = new FakeProvider('wechat');
   const providers = new Map<PaymentMethod, PaymentProvider>([['wechat', wechat]]);
   const container = buildContainer(config, { providers });
@@ -190,6 +190,38 @@ test('rate limiting returns 429 with Retry-After after the limit', async () => {
     // Exempt routes are never limited.
     assert.equal((await fetch(`${base}/healthz`)).status, 200);
     assert.equal((await fetch(`${base}/metrics`)).status, 200);
+  } finally {
+    server.close();
+  }
+});
+
+test('security headers and CORS are applied; OPTIONS is preflighted', async () => {
+  const { base, server } = await startServer(); // default security has corsOrigins ['*']
+  try {
+    const res = await fetch(`${base}/healthz`);
+    assert.equal(res.headers.get('x-content-type-options'), 'nosniff');
+    assert.equal(res.headers.get('x-frame-options'), 'DENY');
+    assert.equal(res.headers.get('referrer-policy'), 'no-referrer');
+    assert.equal(res.headers.get('access-control-allow-origin'), '*');
+
+    const preflight = await fetch(`${base}/api/orders`, { method: 'OPTIONS' });
+    assert.equal(preflight.status, 204);
+    assert.match(preflight.headers.get('access-control-allow-methods') ?? '', /POST/);
+    assert.ok(preflight.headers.get('access-control-allow-headers'));
+  } finally {
+    server.close();
+  }
+});
+
+test('oversized request bodies are rejected with 413', async () => {
+  const { base, server } = await startServer();
+  try {
+    const huge = 'x'.repeat(1_200_000); // exceeds the 1MB default limit
+    const res = await fetch(`${base}/api/orders`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: 'u1', planId: 'monthly', method: 'wechat', pad: huge }),
+    });
+    assert.equal(res.status, 413);
   } finally {
     server.close();
   }

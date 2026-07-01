@@ -5,16 +5,17 @@ A commercial-grade payment backend for a VPN service, supporting **WeChat Pay**,
 dependencies** (only Node.js ≥ 20 built-ins: `crypto`, `http`, `fetch`), which
 keeps it auditable, easy to deploy, and free of payment-SDK supply-chain risk.
 
-> Status: builds clean (`tsc`, strict mode) and passes **169 automated tests**
+> Status: builds clean (`tsc`, strict mode) and passes **194 automated tests**
 > covering signing, callbacks, the order state machine, idempotency & dedupe
 > retention, concurrency, amount validation, USDT reconciliation, refunds
 > (full/partial/manual and asynchronous PROCESSING→final settlement), subscription
 > expiry & notifications, accounts (register/login/API-key auth), multi-currency
-> pricing, admin reporting, financial-consistency reconciliation, an audit log
-> (in-memory + SQL), outbound webhooks with retry/dead-letter, an OpenAPI spec,
-> Prometheus metrics, in-process & Redis rate limiting, SMTP email delivery,
-> localized billing emails, monitoring artifacts, the SQL row mappers, a full
-> end-to-end journey test, and the HTTP API end-to-end.
+> pricing (static + cached live feed), admin reporting, CSV export,
+> financial-consistency reconciliation, an audit log (in-memory + SQL), outbound
+> webhooks with retry/dead-letter, an OpenAPI spec, Prometheus metrics, in-process
+> & Redis rate limiting, HTTP hardening (CORS/security headers/timeout/body caps),
+> SMTP email delivery, localized billing emails, monitoring artifacts, the SQL row
+> mappers, a full end-to-end journey test, and the HTTP API end-to-end.
 
 ## Why one coherent codebase
 
@@ -111,6 +112,8 @@ run with any subset of WeChat / Alipay / USDT configured.
 | `POST /admin/expiry/run` | Run subscription reminders + deactivation pass 🔒 |
 | `POST /admin/reconciliation` | Run a financial-consistency audit (`?heal=true` to expire stale) 🔒 |
 | `GET /admin/audit` | Query the audit log (filters: `action`,`actor`,`subjectId`,`from`,`to`) 🔒 |
+| `GET /admin/orders.csv` | Export orders as CSV 🔒 |
+| `GET /admin/refunds.csv` | Export refunds as CSV 🔒 |
 | `GET /admin/webhooks` | List outbound webhook deliveries (filter `status`) 🔒 |
 | `POST /admin/webhooks/{id}/retry` | Requeue a dead-lettered delivery 🔒 |
 | `POST /internal/webhooks/process` | Drain due webhook deliveries (cron) |
@@ -216,14 +219,34 @@ LOAD_CONCURRENCY=50 LOAD_TOTAL=5000 npm run loadtest
 # or time-boxed: LOAD_DURATION_SEC=30 npm run loadtest
 ```
 
+## HTTP security hardening
+
+Every response carries security headers (`X-Content-Type-Options: nosniff`,
+`X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`,
+`X-DNS-Prefetch-Control: off`). CORS is configurable via `CORS_ORIGINS`
+(`*` = any, empty = disabled, else an allow-list) with automatic `OPTIONS`
+preflight handling. Requests have a configurable timeout (`REQUEST_TIMEOUT_MS`
+→ 503) and body-size cap (`MAX_BODY_BYTES` → 413).
+
+## CSV export
+
+`GET /admin/orders.csv` and `GET /admin/refunds.csv` stream RFC 4180 CSV
+(`src/reporting/csv.ts`, properly escaped, CRLF line endings) for bookkeeping and
+reconciliation. They honour the same filters as the JSON listing endpoints.
+
 ## Multi-currency pricing
 
 `PricingService` (`src/pricing/`) converts integer minor-unit amounts between
 currencies using an injectable `ExchangeRateProvider` (a `StaticExchangeRateProvider`
 with a demo CNY-based rate table ships by default). Conversion is decimal-safe
 (handles differing decimal places, half-up rounding). Query it via
-`GET /api/pricing/quote?amount=<minor>&from=CNY&to=USDT`. Swap in a live
-rate-feed implementation of `ExchangeRateProvider` for production.
+`GET /api/pricing/quote?amount=<minor>&from=CNY&to=USDT`.
+
+For live rates, set `FX_RATES_URL`: the container wires a
+`CachingExchangeRateProvider` (`src/pricing/cachingExchangeRates.ts`) that
+refreshes over HTTP on a TTL, serves the last good cache synchronously, and
+**falls back to the static table** if the feed is unreachable — so pricing never
+hard-fails on an FX outage.
 
 ## Idempotency & dedupe retention
 

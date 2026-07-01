@@ -12,13 +12,14 @@ import { AuditLog } from '../audit/auditLog';
 import { WebhookDispatcher, DeliveryStatus } from '../webhooks/outbound';
 import { PricingService } from '../pricing/pricingService';
 import { ProcessedEventStore } from '../storage/repository';
+import { ordersToCsv, refundsToCsv } from '../reporting/csv';
 import { buildOpenApiSpec } from './openapi';
 import { SWAGGER_UI_HTML } from './docsHtml';
 import { toPublicUser } from '../domain/user';
 import { PlanCatalog } from '../services/plans';
 import { UsdtWatcher } from '../services/usdtWatcher';
 import { Metrics } from '../observability/metrics';
-import { parseJsonBody, Router, RouterMetrics, RateLimitOptions, sendJson, sendRaw, ReqContext } from './http';
+import { parseJsonBody, Router, RouterMetrics, RateLimitOptions, SecurityOptions, sendJson, sendRaw, ReqContext } from './http';
 
 export interface ApiDeps {
   payments: PaymentService;
@@ -38,6 +39,7 @@ export interface ApiDeps {
   metrics?: Metrics;
   routerMetrics?: RouterMetrics;
   rateLimit?: RateLimitOptions;
+  security?: SecurityOptions;
   usdtWatcher?: UsdtWatcher;
   webhooks?: WebhookDispatcher;
 }
@@ -125,7 +127,7 @@ function reportFilter(q: URLSearchParams): ReportFilter {
 }
 
 export function buildRouter(deps: ApiDeps): Router {
-  const r = new Router({ metrics: deps.routerMetrics, rateLimit: deps.rateLimit });
+  const r = new Router({ metrics: deps.routerMetrics, rateLimit: deps.rateLimit, security: deps.security });
 
   r.get('/healthz', (_ctx, res) => {
     sendJson(res, 200, { status: 'ok', methods: deps.enabledMethods });
@@ -312,6 +314,21 @@ export function buildRouter(deps: ApiDeps): Router {
     const offset = intParam(ctx.query, 'offset', 0, Number.MAX_SAFE_INTEGER);
     const { total, items } = await deps.reports.listRefunds({ limit, offset });
     sendJson(res, 200, { total, limit, offset, items });
+  });
+
+  // CSV exports for reconciliation / bookkeeping.
+  r.get('/admin/orders.csv', async (ctx, res) => {
+    await adminGuard(ctx, deps);
+    const { items } = await deps.reports.listOrders(reportFilter(ctx.query), { limit: 100_000, offset: 0 });
+    res.setHeader('Content-Disposition', 'attachment; filename="orders.csv"');
+    sendRaw(res, 200, 'text/csv; charset=utf-8', ordersToCsv(items));
+  });
+
+  r.get('/admin/refunds.csv', async (ctx, res) => {
+    await adminGuard(ctx, deps);
+    const { items } = await deps.reports.listRefunds({ limit: 100_000, offset: 0 });
+    res.setHeader('Content-Disposition', 'attachment; filename="refunds.csv"');
+    sendRaw(res, 200, 'text/csv; charset=utf-8', refundsToCsv(items));
   });
 
   // Trigger an expiry pass (reminders + deactivation); usually driven by cron.

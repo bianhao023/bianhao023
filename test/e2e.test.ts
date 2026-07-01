@@ -24,6 +24,7 @@ function buildConfig(): AppConfig {
     adminToken: 'e2e-admin',
     expiryReminderDays: 3, processedEventTtlDays: 7,
     rateLimit: { enabled: false, max: 100, windowMs: 60_000 },
+    security: { corsOrigins: [], requestTimeoutMs: 15000, maxBodyBytes: 1000000, securityHeaders: true },
   };
 }
 

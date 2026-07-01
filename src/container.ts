@@ -34,7 +34,9 @@ import { AuditLog, InMemoryAuditLog } from './audit/auditLog';
 import { WebhookDispatcher, MemoryWebhookRepository, OutboundEmitter } from './webhooks/outbound';
 import { WebhookWatcher } from './webhooks/webhookWatcher';
 import { PricingService } from './pricing/pricingService';
-import { StaticExchangeRateProvider, DEMO_RATES_FROM_CNY } from './pricing/exchangeRates';
+import { StaticExchangeRateProvider, DEMO_RATES_FROM_CNY, ExchangeRateProvider } from './pricing/exchangeRates';
+import { CachingExchangeRateProvider, HttpRateFeed } from './pricing/cachingExchangeRates';
+import { SecurityOptions } from './api/http';
 import { LoggerNotifier, Notifier } from './notifications/notifier';
 import { TemplatedEmailNotifier } from './notifications/emailNotifier';
 import { SmtpMailSender } from './notifications/smtpMailSender';
@@ -72,11 +74,14 @@ export interface Container {
   reconciliation: ReconciliationService;
   audit: AuditLog;
   pricing: PricingService;
+  /** Present only when a live FX feed is configured; call start()/stop() to refresh. */
+  fxProvider?: CachingExchangeRateProvider;
   processedEvents: ProcessedEventStore;
   plans: PlanCatalog;
   metrics: Metrics;
   routerMetrics: RouterMetrics;
   rateLimit?: RateLimitOptions;
+  security: SecurityOptions;
   usdtWatcher?: UsdtWatcher;
   webhooks?: WebhookDispatcher;
   webhookWatcher?: WebhookWatcher;
@@ -153,7 +158,20 @@ export function buildContainer(config: AppConfig, overrides: ContainerOverrides 
 
   const reports = new ReportService(orders, refundsRepo);
   const reconciliation = new ReconciliationService(orders, refundsRepo, () => payments.expireStaleOrders(), now);
-  const pricing = new PricingService(new StaticExchangeRateProvider('CNY', DEMO_RATES_FROM_CNY));
+  // Pricing: use a live cached FX feed when configured, else the static demo table.
+  const staticRates = new StaticExchangeRateProvider('CNY', DEMO_RATES_FROM_CNY);
+  let fxProvider: CachingExchangeRateProvider | undefined;
+  let ratesProvider: ExchangeRateProvider = staticRates;
+  if (config.fx) {
+    fxProvider = new CachingExchangeRateProvider(
+      new HttpRateFeed(http, config.fx.url),
+      config.fx.base,
+      staticRates,
+      { ttlMs: config.fx.ttlMs, now },
+    );
+    ratesProvider = fxProvider;
+  }
+  const pricing = new PricingService(ratesProvider);
 
   // With SMTP configured we can close the loop: expiry notifications become
   // localized emails addressed via the user directory. Otherwise just log.
@@ -214,11 +232,13 @@ export function buildContainer(config: AppConfig, overrides: ContainerOverrides 
     };
   }
 
+  const security: SecurityOptions = { ...config.security };
+
   const enabledMethods = [...providers.keys()];
 
   return {
     config, orders, payments, refunds, reports, expiry, expiryWatcher, users,
-    reconciliation, audit, pricing, processedEvents, plans,
-    metrics, routerMetrics, rateLimit, usdtWatcher, webhooks, webhookWatcher, enabledMethods,
+    reconciliation, audit, pricing, fxProvider, processedEvents, plans,
+    metrics, routerMetrics, rateLimit, security, usdtWatcher, webhooks, webhookWatcher, enabledMethods,
   };
 }

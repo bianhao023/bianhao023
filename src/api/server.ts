@@ -21,6 +21,7 @@ export function createHttpServer(container: Container): Server {
     metrics: container.metrics,
     routerMetrics: container.routerMetrics,
     rateLimit: container.rateLimit,
+    security: container.security,
     usdtWatcher: container.usdtWatcher,
     webhooks: container.webhooks,
   });

@@ -18,9 +18,19 @@ export interface RateLimitOptions {
   skipRoutes: Set<string>;
 }
 
+/** HTTP hardening applied to every request. */
+export interface SecurityOptions {
+  /** Allowed CORS origins: `['*']` = any, `[]` = disabled, else an allow-list. */
+  corsOrigins: string[];
+  requestTimeoutMs: number;
+  maxBodyBytes: number;
+  securityHeaders: boolean;
+}
+
 export interface RouterOptions {
   metrics?: RouterMetrics;
   rateLimit?: RateLimitOptions;
+  security?: SecurityOptions;
 }
 
 export interface ReqContext {
@@ -48,10 +58,12 @@ export class Router {
   private routes: Route[] = [];
   private readonly metrics?: RouterMetrics;
   private readonly rateLimit?: RateLimitOptions;
+  private readonly security?: SecurityOptions;
 
   constructor(opts: RouterOptions = {}) {
     this.metrics = opts.metrics;
     this.rateLimit = opts.rateLimit;
+    this.security = opts.security;
   }
 
   add(method: string, pattern: string, handler: Handler): this {
@@ -91,15 +103,44 @@ export class Router {
     return undefined;
   }
 
+  /** Set security response headers and CORS allow-origin for the request. */
+  private applySecurityHeaders(res: ServerResponse, origin?: string): void {
+    const sec = this.security;
+    if (!sec) return;
+    if (sec.securityHeaders) {
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.setHeader('X-Frame-Options', 'DENY');
+      res.setHeader('Referrer-Policy', 'no-referrer');
+      res.setHeader('X-DNS-Prefetch-Control', 'off');
+    }
+    if (sec.corsOrigins.length > 0) {
+      if (sec.corsOrigins.includes('*')) {
+        res.setHeader('Access-Control-Allow-Origin', '*');
+      } else if (origin && sec.corsOrigins.includes(origin)) {
+        res.setHeader('Access-Control-Allow-Origin', origin);
+        res.setHeader('Vary', 'Origin');
+      }
+    }
+  }
+
   handle(req: IncomingMessage, res: ServerResponse): void {
     const chunks: Buffer[] = [];
     let size = 0;
-    const MAX_BODY = 1_000_000; // 1 MB guard
+    const maxBody = this.security?.maxBodyBytes ?? 1_000_000;
+
+    // Per-request timeout: respond 503 rather than hanging a socket.
+    const timeoutMs = this.security?.requestTimeoutMs;
+    if (timeoutMs && timeoutMs > 0) {
+      req.setTimeout(timeoutMs, () => {
+        if (!res.headersSent) sendJson(res, 503, { error: 'REQUEST_TIMEOUT', message: 'request timed out' });
+        req.destroy();
+      });
+    }
 
     req.on('data', (c: Buffer) => {
       size += c.length;
-      if (size > MAX_BODY) {
-        sendJson(res, 413, { error: 'PAYLOAD_TOO_LARGE', message: 'request body too large' });
+      if (size > maxBody) {
+        if (!res.headersSent) sendJson(res, 413, { error: 'PAYLOAD_TOO_LARGE', message: 'request body too large' });
         req.destroy();
         return;
       }
@@ -120,6 +161,19 @@ export class Router {
     const started = Date.now();
     const httpMethod = req.method ?? 'GET';
     const url = new URL(req.url ?? '/', 'http://localhost');
+
+    // Security response headers + CORS, applied to every response.
+    this.applySecurityHeaders(res, req.headers['origin']);
+
+    // CORS preflight: answer OPTIONS before route matching.
+    if (httpMethod === 'OPTIONS' && this.security && this.security.corsOrigins.length > 0) {
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Idempotency-Key');
+      res.setHeader('Access-Control-Max-Age', '600');
+      res.writeHead(204).end();
+      return;
+    }
+
     const matched = this.match(httpMethod, url.pathname);
     // Low-cardinality route label: the pattern, or "unmatched" for 404s.
     const routeLabel = matched ? matched.route.pattern : 'unmatched';

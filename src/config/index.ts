@@ -53,6 +53,18 @@ export interface RateLimitConfig {
   windowMs: number;
 }
 
+/** HTTP hardening configuration. */
+export interface SecurityConfig {
+  /** Allowed CORS origins: `['*']` = any, `[]` = CORS disabled, else an allow-list. */
+  corsOrigins: string[];
+  /** Per-request timeout in ms (503 if exceeded). */
+  requestTimeoutMs: number;
+  /** Max request body size in bytes (413 if exceeded). */
+  maxBodyBytes: number;
+  /** Emit standard security response headers. */
+  securityHeaders: boolean;
+}
+
 /** Outbound merchant webhook configuration. */
 export interface WebhookConfig {
   /** Merchant endpoint that receives signed event notifications. */
@@ -61,6 +73,16 @@ export interface WebhookConfig {
   secret: string;
   /** Max delivery attempts before a delivery is dead-lettered. */
   maxAttempts: number;
+}
+
+/** Live exchange-rate feed configuration (optional). */
+export interface FxConfig {
+  /** URL returning rates; `{base}` is interpolated if present. */
+  url: string;
+  /** Base currency the feed's rates are relative to. */
+  base: string;
+  /** Cache TTL / refresh interval in ms. */
+  ttlMs: number;
 }
 
 /** SMTP configuration for outbound billing emails. */
@@ -87,11 +109,13 @@ export interface AppConfig {
   /** Days to retain processed-event dedupe records before cleanup. */
   processedEventTtlDays: number;
   rateLimit: RateLimitConfig;
+  security: SecurityConfig;
   wechat?: WechatConfig;
   alipay?: AlipayConfig;
   usdt?: UsdtConfig;
   smtp?: SmtpConfig;
   webhook?: WebhookConfig;
+  fx?: FxConfig;
 }
 
 const CANONICAL_USDT_TRC20 = 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t';
@@ -170,6 +194,15 @@ export function loadConfig(): AppConfig {
     };
   }
 
+  let fx: FxConfig | undefined;
+  if (env('FX_RATES_URL')) {
+    fx = {
+      url: env('FX_RATES_URL'),
+      base: env('FX_BASE', 'CNY'),
+      ttlMs: Number(env('FX_TTL_SEC', '3600')) * 1000,
+    };
+  }
+
   return {
     port: Number(env('PORT', '3000')),
     orderTtlMinutes: Number(env('ORDER_TTL_MINUTES', '15')),
@@ -182,11 +215,21 @@ export function loadConfig(): AppConfig {
       max: Number(env('RATE_LIMIT_MAX', '100')),
       windowMs: Number(env('RATE_LIMIT_WINDOW_SEC', '60')) * 1000,
     },
+    security: {
+      corsOrigins: env('CORS_ORIGINS')
+        .split(',')
+        .map((s) => s.trim())
+        .filter((s) => s !== ''),
+      requestTimeoutMs: Number(env('REQUEST_TIMEOUT_MS', '15000')),
+      maxBodyBytes: Number(env('MAX_BODY_BYTES', '1000000')),
+      securityHeaders: env('SECURITY_HEADERS', 'true') !== 'false',
+    },
     wechat,
     alipay,
     usdt,
     smtp,
     webhook,
+    fx,
   };
 }
 
