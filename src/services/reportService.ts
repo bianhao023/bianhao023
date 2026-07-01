@@ -115,10 +115,12 @@ export class ReportService {
   }
 
   async listOrders(filter: ReportFilter, page: Page): Promise<{ total: number; items: Order[] }> {
-    const all = (await this.orders.all())
-      .filter((o) => this.matches(o, filter))
-      .sort((a, b) => b.createdAt - a.createdAt);
-    return { total: all.length, items: all.slice(page.offset, page.offset + page.limit) };
+    // Push filtering + pagination into the store (SQL WHERE + LIMIT/OFFSET).
+    return this.orders.query(
+      { status: filter.status, method: filter.method, from: filter.from, to: filter.to },
+      page.limit,
+      page.offset,
+    );
   }
 
   async listRefunds(page: Page): Promise<{ total: number; items: Refund[] }> {

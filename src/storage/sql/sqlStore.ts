@@ -2,6 +2,7 @@ import { Order, OrderStatus, Subscription, Currency, PaymentMethod } from '../..
 import { Refund, RefundStatus } from '../../domain/refund';
 import {
   OrderRepository,
+  OrderQueryFilter,
   RefundRepository,
   SubscriptionRepository,
   ProcessedEventStore,
@@ -130,6 +131,30 @@ export class SqlOrderRepository implements OrderRepository {
         o.refundedAmount ?? 0, JSON.stringify(o.metadata)],
     );
     return o;
+  }
+
+  async query(filter: OrderQueryFilter, limit: number, offset: number): Promise<{ total: number; items: Order[] }> {
+    const clauses: string[] = [];
+    const params: unknown[] = [];
+    const add = (sql: string, value: unknown) => {
+      params.push(value);
+      clauses.push(sql.replace('?', `$${params.length}`));
+    };
+    if (filter.status) add('status = ?', filter.status);
+    if (filter.method) add('method = ?', filter.method);
+    if (filter.from !== undefined) add('created_at >= ?', filter.from);
+    if (filter.to !== undefined) add('created_at < ?', filter.to);
+    const where = clauses.length ? ` WHERE ${clauses.join(' AND ')}` : '';
+
+    const countRes = await this.db.query(`SELECT COUNT(*) AS total FROM orders${where}`, params);
+    const total = Number(countRes.rows[0]?.total ?? 0);
+
+    const pageParams = [...params, limit, offset];
+    const listRes = await this.db.query(
+      `SELECT * FROM orders${where} ORDER BY created_at DESC LIMIT $${pageParams.length - 1} OFFSET $${pageParams.length}`,
+      pageParams,
+    );
+    return { total, items: listRes.rows.map(rowToOrder) };
   }
 
   async all(): Promise<Order[]> {

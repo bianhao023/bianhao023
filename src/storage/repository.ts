@@ -1,6 +1,16 @@
-import { Order, Subscription } from '../domain/types';
+import { Order, OrderStatus, Subscription } from '../domain/types';
 import { Refund } from '../domain/refund';
 import { User } from '../domain/user';
+
+/** Filter for paginated order queries (all fields optional / AND-combined). */
+export interface OrderQueryFilter {
+  status?: OrderStatus;
+  method?: string;
+  /** Inclusive lower bound on createdAt (epoch millis). */
+  from?: number;
+  /** Exclusive upper bound on createdAt (epoch millis). */
+  to?: number;
+}
 
 export interface OrderRepository {
   create(order: Order): Promise<Order>;
@@ -10,7 +20,12 @@ export interface OrderRepository {
   /** Pending orders whose unique USDT amount is being watched. */
   findPendingByMethod(method: string): Promise<Order[]>;
   update(order: Order): Promise<Order>;
-  /** All orders (test/admin helper). */
+  /**
+   * Paginated, filtered query (newest-first). The store pushes filtering and
+   * pagination down (SQL WHERE + LIMIT/OFFSET) instead of loading every row.
+   */
+  query(filter: OrderQueryFilter, limit: number, offset: number): Promise<{ total: number; items: Order[] }>;
+  /** All orders (test/admin helper; avoid on large datasets). */
   all(): Promise<Order[]>;
 }
 

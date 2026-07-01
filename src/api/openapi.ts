@@ -51,7 +51,7 @@ export function buildOpenApiSpec(enabledMethods: string[]): Record<string, unkno
       ? `Enabled payment methods on this deployment: ${enabledMethods.join(', ')}.`
       : 'No payment methods are currently enabled on this deployment.';
 
-  return {
+  const spec: Record<string, unknown> = {
     openapi: '3.0.3',
     info: {
       title: 'VPN Payment Backend API',
@@ -60,6 +60,9 @@ export function buildOpenApiSpec(enabledMethods: string[]): Record<string, unkno
         'Commercial-grade payment backend for a VPN service. Supports WeChat Pay, ' +
         'Alipay and USDT (TRC20). All monetary amounts are integers in minor units ' +
         '(CNY: fen; USDT: micro, 6 decimals). ' +
+        'Every `/api/*` endpoint is also served under the explicit `/api/v1/*` alias; ' +
+        'both are canonical for the current major version. Responses carry an ' +
+        '`X-API-Version` header indicating the resolved API version. ' +
         methodsNote,
     },
     servers: [{ url: '/', description: 'Current deployment' }],
@@ -547,6 +550,21 @@ export function buildOpenApiSpec(enabledMethods: string[]): Record<string, unkno
       },
     },
   };
+
+  // Mirror every un-versioned `/api/*` path under the explicit `/api/v1/*` alias
+  // (see `r.aliasPrefix('/api', '/api/v1')` in routes.ts). Done generically so it
+  // stays correct as routes change. The same operation object is shared under both
+  // keys — this is fine for JSON.stringify (shared refs are not cycles). Non-`/api`
+  // paths (healthz, metrics, docs, openapi.json, admin, internal, ...) are not mirrored.
+  const paths = spec.paths as Record<string, unknown>;
+  for (const key of Object.keys(paths)) {
+    if (key.startsWith('/api/')) {
+      const versionedKey = key.replace(/^\/api\//, '/api/v1/');
+      paths[versionedKey] = paths[key];
+    }
+  }
+
+  return spec;
 }
 
 /** The `{id}` path parameter shared by order routes. */

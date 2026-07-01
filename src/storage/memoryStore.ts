@@ -3,6 +3,7 @@ import { Refund } from '../domain/refund';
 import { User } from '../domain/user';
 import {
   OrderRepository,
+  OrderQueryFilter,
   RefundRepository,
   SubscriptionRepository,
   UserRepository,
@@ -61,6 +62,19 @@ export class MemoryOrderRepository implements OrderRepository {
     if (!this.byId.has(order.id)) throw new Error(`unknown order: ${order.id}`);
     this.byId.set(order.id, clone(order));
     return clone(order);
+  }
+
+  async query(filter: OrderQueryFilter, limit: number, offset: number): Promise<{ total: number; items: Order[] }> {
+    const matched = [...this.byId.values()]
+      .filter((o) => {
+        if (filter.status && o.status !== filter.status) return false;
+        if (filter.method && o.method !== filter.method) return false;
+        if (filter.from !== undefined && o.createdAt < filter.from) return false;
+        if (filter.to !== undefined && o.createdAt >= filter.to) return false;
+        return true;
+      })
+      .sort((a, b) => b.createdAt - a.createdAt);
+    return { total: matched.length, items: matched.slice(offset, offset + limit).map(clone) };
   }
 
   async all(): Promise<Order[]> {
