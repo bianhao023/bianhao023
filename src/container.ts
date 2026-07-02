@@ -35,6 +35,8 @@ import { WebhookDispatcher, MemoryWebhookRepository, OutboundEmitter } from './w
 import { WebhookWatcher } from './webhooks/webhookWatcher';
 import { Alert } from './alerting/alertFormatter';
 import { ReadinessAggregator, HealthCheck } from './health/readiness';
+import { sqlHealthCheck, redisHealthCheck, PingableRedis } from './health/dependencyChecks';
+import { SqlClient } from './storage/sql/sqlStore';
 import { logger } from './utils/logger';
 import { PricingService } from './pricing/pricingService';
 import { StaticExchangeRateProvider, DEMO_RATES_FROM_CNY, ExchangeRateProvider } from './pricing/exchangeRates';
@@ -63,6 +65,10 @@ export interface ContainerOverrides {
   now?: () => number;
   /** Force-enable/replace providers regardless of config (test convenience). */
   providers?: Map<PaymentMethod, PaymentProvider>;
+  /** SQL client to include as a critical `/readyz` ping (SQL-backed deploys). */
+  readinessSql?: SqlClient;
+  /** Redis client to include as a non-critical `/readyz` ping. */
+  readinessRedis?: PingableRedis;
 }
 
 export interface Container {
@@ -184,6 +190,15 @@ export function buildContainer(config: AppConfig, overrides: ContainerOverrides 
   // informational (a stale FX feed or a non-empty DLQ does not remove the node
   // from the load balancer — the service still serves requests).
   const readinessChecks: HealthCheck[] = [{ name: 'core', critical: true, run: () => ({ ok: true }) }];
+  // Real dependency pings when a SQL/Redis client is injected (SQL-backed
+  // deployments). SQL is critical (its outage ejects the node); Redis is not
+  // (rate limiting degrades to the in-process limiter).
+  if (overrides.readinessSql) {
+    readinessChecks.push(sqlHealthCheck(overrides.readinessSql));
+  }
+  if (overrides.readinessRedis) {
+    readinessChecks.push(redisHealthCheck(overrides.readinessRedis));
+  }
   if (fxProvider) {
     readinessChecks.push({
       name: 'fx',

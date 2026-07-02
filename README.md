@@ -5,7 +5,7 @@ A commercial-grade payment backend for a VPN service, supporting **WeChat Pay**,
 dependencies** (only Node.js ≥ 20 built-ins: `crypto`, `http`, `fetch`), which
 keeps it auditable, easy to deploy, and free of payment-SDK supply-chain risk.
 
-> Status: builds clean (`tsc`, strict mode) and passes **260 automated tests**
+> Status: builds clean (`tsc`, strict mode) and passes **278 automated tests**
 > covering signing, callbacks, the order state machine, idempotency & dedupe
 > retention, concurrency, amount validation, USDT reconciliation, refunds
 > (full/partial/manual and asynchronous PROCESSING→final settlement), subscription
@@ -73,6 +73,15 @@ All amounts are integer **minor units** to avoid floating-point errors:
   and the admin token can be rotated with zero downtime via `ADMIN_TOKEN_PREVIOUS`.
 - **USDT matching**: deposits to a shared address are matched to orders by a
   unique exact amount, with confirmation and time-window checks.
+- **Deep readiness**: `/readyz` aggregates isolated health checks (each with its
+  own timeout). When a SQL/Redis client is injected, real `SELECT 1` / `PING`
+  probes are added — SQL is critical (its outage returns 503), Redis is not
+  (rate limiting degrades to the in-process limiter).
+- **Pluggable secrets**: callers depend only on the `SecretProvider` interface
+  (`Env`/`Static` today). `CachingSecretProvider` fronts an async KMS/Vault-style
+  source behind that synchronous interface with startup priming, per-name
+  in-flight de-duplication, and stale-while-revalidate background refresh, so a
+  real Secrets Manager backend is a drop-in with no call-site changes.
 
 ## Getting started
 
@@ -92,7 +101,7 @@ run with any subset of WeChat / Alipay / USDT configured.
 | Method & path | Description |
 |---|---|
 | `GET /healthz` | Liveness + enabled methods |
-| `GET /readyz` | Deep readiness probe (200 ready / 503 degraded) |
+| `GET /readyz` | Deep readiness probe (200 ready / 503 degraded); pings SQL/Redis when injected |
 | `GET /version` | App/API version + supported API versions |
 | `GET /openapi.json` | OpenAPI 3.0.3 specification |
 | `GET /docs` | Swagger UI (interactive API docs) |
