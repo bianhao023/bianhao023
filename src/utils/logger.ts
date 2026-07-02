@@ -1,5 +1,7 @@
 /* Minimal structured logger. Silenced when LOG_LEVEL=silent (used in tests). */
 
+import { currentRequestId } from '../observability/requestContext';
+
 type Level = 'debug' | 'info' | 'warn' | 'error';
 const ORDER: Record<Level, number> = { debug: 10, info: 20, warn: 30, error: 40 };
 
@@ -11,10 +13,13 @@ function threshold(): number {
 
 function emit(level: Level, msg: string, meta?: Record<string, unknown>): void {
   if (ORDER[level] < threshold()) return;
+  // Auto-correlate with the ambient request id (explicit meta.requestId wins).
+  const requestId = currentRequestId();
   const line = {
     t: new Date().toISOString(),
     level,
     msg,
+    ...(requestId && !(meta && 'requestId' in meta) ? { requestId } : {}),
     ...(meta ?? {}),
   };
   const out = level === 'error' || level === 'warn' ? process.stderr : process.stdout;

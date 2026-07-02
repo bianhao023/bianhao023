@@ -5,7 +5,7 @@ A commercial-grade payment backend for a VPN service, supporting **WeChat Pay**,
 dependencies** (only Node.js ≥ 20 built-ins: `crypto`, `http`, `fetch`), which
 keeps it auditable, easy to deploy, and free of payment-SDK supply-chain risk.
 
-> Status: builds clean (`tsc`, strict mode) and passes **255 automated tests**
+> Status: builds clean (`tsc`, strict mode) and passes **260 automated tests**
 > covering signing, callbacks, the order state machine, idempotency & dedupe
 > retention, concurrency, amount validation, USDT reconciliation, refunds
 > (full/partial/manual and asynchronous PROCESSING→final settlement), subscription
@@ -354,7 +354,11 @@ Every response carries an `X-Request-Id` header — an inbound one is honoured,
 otherwise a UUID is minted. Each request emits a structured access log line
 (`msg:"request"`) with `requestId`, method, route pattern, status, duration and
 client ip, so logs can be correlated end-to-end (`ctx.requestId` is available to
-handlers). 
+handlers). The id is also bound to an `AsyncLocalStorage` request context, so
+**every** log emitted while handling a request — including service and
+repository logs (`order.created`, `refund.issued`, …) — is automatically
+stamped with the same `requestId`, giving end-to-end trace correlation without
+threading the id through call signatures.
 
 ## Monitoring & metrics
 

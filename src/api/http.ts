@@ -4,6 +4,7 @@ import { Counter, Histogram } from '../observability/metrics';
 import { RateLimiterLike } from './rateLimiter';
 import { API_VERSION } from '../version';
 import { uuid } from '../utils/ids';
+import { runWithRequestId } from '../observability/requestContext';
 import { logger } from '../utils/logger';
 
 /** Optional request-level instrumentation for the router. */
@@ -269,7 +270,9 @@ export class Router {
       requestId,
     };
     try {
-      await matched.route.handler(ctx, res);
+      // Bind the request id to the async context so service/repository logs
+      // during this handler are automatically correlated.
+      await runWithRequestId(requestId, () => matched.route.handler(ctx, res));
     } catch (err) {
       if (err instanceof AppError) {
         sendJson(res, err.httpStatus, { error: err.code, message: err.message });
