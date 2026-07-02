@@ -20,6 +20,7 @@ export function apiDepsFromContainer(container: Container): ApiDeps {
     plans: container.plans,
     enabledMethods: container.enabledMethods,
     adminToken: container.config.adminToken,
+    adminTokenPrevious: container.config.adminTokenPrevious,
     metrics: container.metrics,
     routerMetrics: container.routerMetrics,
     rateLimit: container.rateLimit,

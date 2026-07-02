@@ -12,6 +12,8 @@ export interface WechatConfig {
   apiV3Key: string;
   /** WeChat platform public certificate (PEM) used to verify notifications. */
   platformPublicKeyPem: string;
+  /** Optional incoming platform certificate (PEM) accepted during cert rotation. */
+  platformPublicKeyNext?: string;
   /** URL WeChat will POST notifications to. */
   notifyUrl: string;
   apiBase: string;
@@ -104,6 +106,8 @@ export interface AppConfig {
   enabledMethods: PaymentMethod[];
   /** Bearer token guarding the /admin endpoints. When unset, admin is disabled. */
   adminToken?: string;
+  /** Previous admin token, still accepted during rotation (grace window). */
+  adminTokenPrevious?: string;
   /** Days before expiry to send a renewal reminder. */
   expiryReminderDays: number;
   /** Days to retain processed-event dedupe records before cleanup. */
@@ -141,6 +145,9 @@ export function loadConfig(): AppConfig {
       serialNo: env('WECHAT_SERIAL_NO'),
       apiV3Key: env('WECHAT_API_V3_KEY'),
       platformPublicKeyPem: env('WECHAT_PLATFORM_PUBLIC_KEY').replace(/\\n/g, '\n'),
+      platformPublicKeyNext: env('WECHAT_PLATFORM_PUBLIC_KEY_NEXT')
+        ? env('WECHAT_PLATFORM_PUBLIC_KEY_NEXT').replace(/\\n/g, '\n')
+        : undefined,
       notifyUrl: env('WECHAT_NOTIFY_URL'),
       apiBase: env('WECHAT_API_BASE', 'https://api.mch.weixin.qq.com'),
     };
@@ -208,6 +215,7 @@ export function loadConfig(): AppConfig {
     orderTtlMinutes: Number(env('ORDER_TTL_MINUTES', '15')),
     enabledMethods: enabled,
     adminToken: env('ADMIN_TOKEN') || undefined,
+    adminTokenPrevious: env('ADMIN_TOKEN_PREVIOUS') || undefined,
     expiryReminderDays: Number(env('EXPIRY_REMINDER_DAYS', '3')),
     processedEventTtlDays: Number(env('PROCESSED_EVENT_TTL_DAYS', '7')),
     rateLimit: {

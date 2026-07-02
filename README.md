@@ -5,7 +5,7 @@ A commercial-grade payment backend for a VPN service, supporting **WeChat Pay**,
 dependencies** (only Node.js ≥ 20 built-ins: `crypto`, `http`, `fetch`), which
 keeps it auditable, easy to deploy, and free of payment-SDK supply-chain risk.
 
-> Status: builds clean (`tsc`, strict mode) and passes **235 automated tests**
+> Status: builds clean (`tsc`, strict mode) and passes **238 automated tests**
 > covering signing, callbacks, the order state machine, idempotency & dedupe
 > retention, concurrency, amount validation, USDT reconciliation, refunds
 > (full/partial/manual and asynchronous PROCESSING→final settlement), subscription
@@ -68,6 +68,9 @@ All amounts are integer **minor units** to avoid floating-point errors:
 - **Amount/currency validation**: underpayment and currency mismatches are
   rejected before any access is granted; overpayment is accepted and logged.
 - **Order expiry**: pending orders auto-expire; a late callback cannot revive them.
+- **Key-rotation grace**: WeChat platform-certificate rotation is handled by
+  accepting the current or the incoming (`WECHAT_PLATFORM_PUBLIC_KEY_NEXT`) cert,
+  and the admin token can be rotated with zero downtime via `ADMIN_TOKEN_PREVIOUS`.
 - **USDT matching**: deposits to a shared address are matched to orders by a
   unique exact amount, with confirmation and time-window checks.
 

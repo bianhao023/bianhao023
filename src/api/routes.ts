@@ -40,6 +40,8 @@ export interface ApiDeps {
   enabledMethods: PaymentMethod[];
   /** Bearer token guarding /admin. Undefined disables admin endpoints. */
   adminToken?: string;
+  /** Previous admin token accepted during rotation (grace window). */
+  adminTokenPrevious?: string;
   metrics?: Metrics;
   routerMetrics?: RouterMetrics;
   rateLimit?: RateLimitOptions;
@@ -88,18 +90,22 @@ function bearerToken(ctx: ReqContext): string {
   return header.startsWith('Bearer ') ? header.slice('Bearer '.length) : '';
 }
 
-/** Enforce the admin bearer token (constant-time). Disabled when no token set. */
-function requireAdmin(ctx: ReqContext, adminToken?: string): void {
+/**
+ * Enforce the admin bearer token (constant-time). Accepts the current token or,
+ * during rotation, the previous one. Disabled when no token is set.
+ */
+function requireAdmin(ctx: ReqContext, adminToken?: string, adminTokenPrevious?: string): void {
   if (!adminToken) throw new AuthError('admin endpoints are disabled (set ADMIN_TOKEN)', 403);
   const header = ctx.headers['authorization'] ?? '';
   const prefix = 'Bearer ';
   const token = header.startsWith(prefix) ? header.slice(prefix.length) : '';
-  if (!safeEqual(token, adminToken)) throw new AuthError('invalid admin token');
+  const valid = safeEqual(token, adminToken) || (!!adminTokenPrevious && safeEqual(token, adminTokenPrevious));
+  if (!valid) throw new AuthError('invalid admin token');
 }
 
 /** Authenticate an admin request and record the access in the audit log. */
 async function adminGuard(ctx: ReqContext, deps: ApiDeps): Promise<void> {
-  requireAdmin(ctx, deps.adminToken);
+  requireAdmin(ctx, deps.adminToken, deps.adminTokenPrevious);
   await deps.audit.record({ action: 'admin.access', subjectId: ctx.path, metadata: { method: ctx.method } });
 }
 

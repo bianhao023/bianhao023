@@ -15,8 +15,8 @@ async function getJson(res: Response): Promise<any> {
   return (await res.json()) as any;
 }
 
-function start(adminToken?: string): Promise<{ base: string; server: Server }> {
-  const config: AppConfig = { port: 0, orderTtlMinutes: 15, enabledMethods: [], expiryReminderDays: 3, processedEventTtlDays: 7, adminToken, rateLimit: { enabled: false, max: 100, windowMs: 60000 }, security: { corsOrigins: [], requestTimeoutMs: 15000, maxBodyBytes: 1000000, securityHeaders: true } };
+function start(adminToken?: string, adminTokenPrevious?: string): Promise<{ base: string; server: Server }> {
+  const config: AppConfig = { port: 0, orderTtlMinutes: 15, enabledMethods: [], expiryReminderDays: 3, processedEventTtlDays: 7, adminToken, adminTokenPrevious, rateLimit: { enabled: false, max: 100, windowMs: 60000 }, security: { corsOrigins: [], requestTimeoutMs: 15000, maxBodyBytes: 1000000, securityHeaders: true } };
   const providers = new Map<PaymentMethod, PaymentProvider>([['wechat', new FakeProvider('wechat')]]);
   const container = buildContainer(config, { providers });
   const server = createHttpServer(container);
@@ -42,6 +42,18 @@ test('admin endpoints reject missing and wrong tokens', async () => {
   try {
     assert.equal((await fetch(`${base}/admin/reports/summary`)).status, 401);
     assert.equal((await fetch(`${base}/admin/reports/summary`, { headers: { Authorization: 'Bearer nope' } })).status, 401);
+  } finally {
+    server.close();
+  }
+});
+
+test('during rotation, both the current and previous admin tokens are accepted', async () => {
+  const { base, server } = await start('new-token', 'old-token');
+  try {
+    const url = `${base}/admin/reports/summary`;
+    assert.equal((await fetch(url, { headers: { Authorization: 'Bearer new-token' } })).status, 200);
+    assert.equal((await fetch(url, { headers: { Authorization: 'Bearer old-token' } })).status, 200);
+    assert.equal((await fetch(url, { headers: { Authorization: 'Bearer other' } })).status, 401);
   } finally {
     server.close();
   }

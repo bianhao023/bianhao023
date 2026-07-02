@@ -118,6 +118,22 @@ test('verifyCallback rejects a bad signature', async () => {
   await assert.rejects(() => provider.verifyCallback(n), SignatureError);
 });
 
+test('verifyCallback accepts the "next" platform cert during rotation', async () => {
+  const now = Date.now();
+  // Primary key is WRONG; the correct platform key is configured as "next".
+  const rotatingCfg = { ...cfg(), platformPublicKeyPem: genRsaKeyPair().publicKey, platformPublicKeyNext: platform.publicKey };
+  const provider = new WechatPayProvider(rotatingCfg, new MockHttpClient(() => ({ status: 200, body: '{}' })), () => now);
+  const result = await provider.verifyCallback(buildNotification(now));
+  assert.equal(result.paid, true);
+});
+
+test('verifyCallback rejects when neither current nor next cert matches', async () => {
+  const now = Date.now();
+  const badCfg = { ...cfg(), platformPublicKeyPem: genRsaKeyPair().publicKey, platformPublicKeyNext: genRsaKeyPair().publicKey };
+  const provider = new WechatPayProvider(badCfg, new MockHttpClient(() => ({ status: 200, body: '{}' })), () => now);
+  await assert.rejects(() => provider.verifyCallback(buildNotification(now)), SignatureError);
+});
+
 test('verifyCallback rejects a stale (replayed) timestamp', async () => {
   const now = Date.now();
   const n = buildNotification(now - 10 * 60_000); // 10 minutes old

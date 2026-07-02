@@ -92,13 +92,14 @@ export class WechatPayProvider implements PaymentProvider {
       throw new SignatureError('WeChat notification timestamp out of range');
     }
 
-    const ok = verifyNotificationSignature({
-      timestamp,
-      nonce,
-      body: cb.rawBody,
-      signatureB64: signature,
-      platformPublicKeyPem: this.cfg.platformPublicKeyPem,
-    });
+    // Accept the current or the incoming ("next") platform certificate so
+    // WeChat's periodic certificate rotation causes no downtime.
+    const keys = [this.cfg.platformPublicKeyPem, this.cfg.platformPublicKeyNext].filter(
+      (k): k is string => !!k,
+    );
+    const ok = keys.some((platformPublicKeyPem) =>
+      verifyNotificationSignature({ timestamp, nonce, body: cb.rawBody, signatureB64: signature, platformPublicKeyPem }),
+    );
     if (!ok) throw new SignatureError('WeChat notification signature invalid');
 
     const envelope = JSON.parse(cb.rawBody) as {
