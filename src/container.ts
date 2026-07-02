@@ -28,6 +28,8 @@ import { TronWallet, TronTreasury } from './providers/usdt/tronTreasury';
 import { AddressAllocator } from './services/addressAllocator';
 import { SweepService } from './services/sweepService';
 import { SweepWatcher } from './services/sweepWatcher';
+import { SweepAlertWatcher } from './alerting/sweepAlerts';
+import { registerSweepMetrics } from './observability/sweepMetrics';
 import { PlanCatalog } from './services/plans';
 import { SubscriptionService } from './services/subscriptionService';
 import { PaymentService } from './services/paymentService';
@@ -117,6 +119,10 @@ export interface Container {
   /** Present in per-order USDT mode: collects deposits to the central wallet. */
   sweepService?: SweepService;
   sweepWatcher?: SweepWatcher;
+  /** Sweep-job store (per-order USDT mode); exposed for admin listing. */
+  sweepJobs?: SweepJobRepository;
+  /** Raises alerts on FAILED sweeps / low fee wallet (per-order USDT mode). */
+  sweepAlertWatcher?: SweepAlertWatcher;
   webhooks?: WebhookDispatcher;
   webhookWatcher?: WebhookWatcher;
   enabledMethods: PaymentMethod[];
@@ -169,6 +175,7 @@ export function buildContainer(config: AppConfig, overrides: ContainerOverrides 
   let addressAllocator: AddressAllocator | undefined;
   let sweepService: SweepService | undefined;
   let sweepWatcher: SweepWatcher | undefined;
+  let sweepJobsRepo: SweepJobRepository | undefined;
   let onUsdtSettled: ((order: Order) => Promise<void>) | undefined;
   if (config.usdt?.addressMode === 'per-order') {
     if (!overrides.tronWallet || !overrides.tronTreasury) {
@@ -181,10 +188,10 @@ export function buildContainer(config: AppConfig, overrides: ContainerOverrides 
       throw new Error('USDT per-order mode requires USDT_COLLECTION_ADDRESS');
     }
     const depositAddresses = overrides.depositAddresses ?? new MemoryDepositAddressRepository();
-    const sweepJobs = overrides.sweepJobs ?? new MemorySweepJobRepository();
+    sweepJobsRepo = overrides.sweepJobs ?? new MemorySweepJobRepository();
     addressAllocator = new AddressAllocator(overrides.tronWallet, depositAddresses, config.usdt.hdStartIndex, now);
     sweepService = new SweepService({
-      jobs: sweepJobs,
+      jobs: sweepJobsRepo,
       treasury: overrides.tronTreasury,
       policy: { collectionAddress: config.usdt.collectionAddress, ...config.usdt.sweep },
       audit,
@@ -346,10 +353,24 @@ export function buildContainer(config: AppConfig, overrides: ContainerOverrides 
 
   const enabledMethods = [...providers.keys()];
 
+  // Sweep observability (per-order USDT mode): job/fee-wallet metrics + alerts
+  // on FAILED sweeps and a low fee (gas) wallet. Wired here so `metrics` and
+  // `alertSink` already exist.
+  let sweepAlertWatcher: SweepAlertWatcher | undefined;
+  if (sweepService && sweepJobsRepo) {
+    const treasury = overrides.tronTreasury;
+    const feeBalanceSun = treasury?.feeBalanceSun
+      ? (): Promise<number | undefined> => treasury.feeBalanceSun!()
+      : undefined;
+    registerSweepMetrics({ metrics, sweepJobs: sweepJobsRepo, feeBalanceSun });
+    const feeThresholdSun = config.usdt?.feeWalletMinSun ?? (config.usdt ? config.usdt.sweep.gasTopupSun * 10 : 0);
+    sweepAlertWatcher = new SweepAlertWatcher({ sweepJobs: sweepJobsRepo, alertSink, feeThresholdSun, feeBalanceSun });
+  }
+
   return {
     config, orders, payments, refunds, reports, expiry, expiryWatcher, users,
     reconciliation, audit, pricing, readiness, alertSink, fxProvider, processedEvents, plans,
     metrics, routerMetrics, rateLimit, security, usdtWatcher, sweepService, sweepWatcher,
-    webhooks, webhookWatcher, enabledMethods,
+    sweepJobs: sweepJobsRepo, sweepAlertWatcher, webhooks, webhookWatcher, enabledMethods,
   };
 }

@@ -61,4 +61,10 @@ export interface TronTreasury {
   ): Promise<string>;
   /** Whether `txId` has reached the required confirmations. */
   isConfirmed(txId: string): Promise<boolean>;
+  /**
+   * Optional: current TRX balance of the fee wallet (sun). Exposed for balance
+   * monitoring/alerting — an empty fee wallet stalls all sweeps. Adapters that
+   * cannot report it simply omit this method.
+   */
+  feeBalanceSun?(): Promise<number>;
 }

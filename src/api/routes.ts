@@ -13,7 +13,8 @@ import { AuditLog } from '../audit/auditLog';
 import { WebhookDispatcher, DeliveryStatus } from '../webhooks/outbound';
 import { PricingService } from '../pricing/pricingService';
 import { ReadinessAggregator } from '../health/readiness';
-import { ProcessedEventStore } from '../storage/repository';
+import { ProcessedEventStore, SweepJobRepository } from '../storage/repository';
+import { SweepService } from '../services/sweepService';
 import { ordersToCsv, refundsToCsv } from '../reporting/csv';
 import { formatReconciliationAlert, Alert } from '../alerting/alertFormatter';
 import { APP_VERSION, API_VERSION, SUPPORTED_API_VERSIONS } from '../version';
@@ -50,6 +51,10 @@ export interface ApiDeps {
   security?: SecurityOptions;
   usdtWatcher?: UsdtWatcher;
   webhooks?: WebhookDispatcher;
+  /** Sweep-job store (per-order USDT mode); enables /admin/sweeps. */
+  sweepJobs?: SweepJobRepository;
+  /** Sweep service (per-order USDT mode); enables sweep retry. */
+  sweepService?: SweepService;
 }
 
 /** Public, sanitised projection of an order returned to clients. */
@@ -355,6 +360,35 @@ export function buildRouter(deps: ApiDeps): Router {
     const offset = intParam(ctx.query, 'offset', 0, Number.MAX_SAFE_INTEGER);
     const { total, items } = await deps.reports.listRefunds({ limit, offset }, refundFilter(ctx.query));
     sendJson(res, 200, { total, limit, offset, items });
+  });
+
+  // USDT sweep ("二次归集") jobs: list, and manually requeue a FAILED one.
+  r.get('/admin/sweeps', async (ctx, res) => {
+    await adminGuard(ctx, deps);
+    if (!deps.sweepJobs) {
+      sendJson(res, 404, { error: 'NOT_ENABLED', message: 'USDT per-order sweeping is not enabled' });
+      return;
+    }
+    const statusFilter = ctx.query.get('status') ?? undefined;
+    let items = await deps.sweepJobs.all();
+    if (statusFilter) items = items.filter((j) => j.status === statusFilter);
+    const limit = intParam(ctx.query, 'limit', 100, 1000);
+    const offset = intParam(ctx.query, 'offset', 0, Number.MAX_SAFE_INTEGER);
+    sendJson(res, 200, { total: items.length, limit, offset, items: items.slice(offset, offset + limit) });
+  });
+
+  r.post('/admin/sweeps/:orderId/retry', async (ctx, res) => {
+    await adminGuard(ctx, deps);
+    if (!deps.sweepService) {
+      sendJson(res, 404, { error: 'NOT_ENABLED', message: 'USDT per-order sweeping is not enabled' });
+      return;
+    }
+    const job = await deps.sweepService.retry(ctx.params.orderId);
+    if (!job) {
+      sendJson(res, 404, { error: 'NOT_FOUND', message: 'no FAILED sweep job for that order' });
+      return;
+    }
+    sendJson(res, 200, { requeued: true, job });
   });
 
   // CSV exports for reconciliation / bookkeeping.

@@ -79,6 +79,26 @@ export class SweepService {
     return this.deps.jobs.create(job);
   }
 
+  /**
+   * Requeue a FAILED sweep for another attempt (manual operator recovery, e.g.
+   * after topping up the fee wallet). Resets it to PENDING, due immediately.
+   * Returns the job, or undefined if it does not exist or is not FAILED.
+   */
+  async retry(orderId: string): Promise<SweepJob | undefined> {
+    const job = await this.deps.jobs.findByOrderId(orderId);
+    if (!job || job.status !== SweepStatus.FAILED) return undefined;
+    const now = this.now();
+    Object.assign(job, {
+      status: SweepStatus.PENDING,
+      attempts: 0,
+      lastError: undefined,
+      updatedAt: now,
+      nextAttemptAt: now,
+    });
+    logger.info('sweep manually requeued', { orderId });
+    return this.deps.jobs.update(job);
+  }
+
   /** Advance every due job by one step. Returns the number processed. */
   async processDue(limit = 50): Promise<number> {
     const due = await this.deps.jobs.due(this.now(), limit);

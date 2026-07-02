@@ -28,6 +28,8 @@ export function apiDepsFromContainer(container: Container): ApiDeps {
     security: container.security,
     usdtWatcher: container.usdtWatcher,
     webhooks: container.webhooks,
+    sweepJobs: container.sweepJobs,
+    sweepService: container.sweepService,
   };
 }
 

@@ -300,6 +300,11 @@ PENDING ──▶ GAS_FUELING ──▶ SWEEPING ──▶ SWEPT
 - 归集为幂等、断点续跑：崩溃/重启后各任务从其持久化状态继续；`FAILED` 任务需人工介入（查 `sweep_jobs.last_error`）。
 - 多副本安全：任务持久化于 DB，`sweep_jobs` 唯一约束保证每单一份；启用 `DATABASE_URL` 即跨实例安全。
 
+**监控与运维（observability & ops）**：
+- 指标（`/metrics`）：`vpn_sweep_jobs{status}`、`vpn_sweep_pending`、`vpn_sweep_failed`、`vpn_sweep_amount_micro_total`（已归集总额）、`vpn_fee_wallet_trx_sun`（费用钱包余额）。
+- 告警：出现 `FAILED` 归集（critical）或费用钱包低于 `USDT_FEE_WALLET_MIN_SUN`（默认 10×gas 单笔）时自动告警（走 `alertSink`，同 reconciliation/DLQ 通道）。**务必为 `vpn_fee_wallet_trx_sun` 配 Prometheus 告警规则。**
+- 运维接口（需 `ADMIN_TOKEN`）：`GET /admin/sweeps?status=FAILED` 查看卡住的归集；补足费用钱包后 `POST /admin/sweeps/<orderId>/retry` 重新入队。
+
 ---
 
 ## 8. 上线验收清单 (Go-live checklist)

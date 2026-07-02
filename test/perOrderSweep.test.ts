@@ -1,7 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { AddressInfo } from 'node:net';
 import { AppConfig } from '../src/config';
 import { buildContainer } from '../src/container';
+import { createHttpServer } from '../src/api/server';
 import { OrderStatus } from '../src/domain/types';
 import { SweepStatus } from '../src/domain/deposit';
 import { SweepService } from '../src/services/sweepService';
@@ -223,4 +225,77 @@ test('gas fueling waits for confirmation before sweeping', async () => {
   assert.equal(job.status, SweepStatus.GAS_FUELING);
   await svc.step(job); // now confirmed -> SWEEPING
   assert.equal(job.status, SweepStatus.SWEEPING);
+});
+
+// ── Admin ops surface (list / retry a FAILED sweep over HTTP) ────────────────
+
+async function getJson(res: Response): Promise<any> {
+  return (await res.json()) as any;
+}
+
+test('admin can list and retry a FAILED sweep over HTTP; shared mode returns 404', async () => {
+  const tron = new FakeTron();
+  tron.failSweep = true; // force the sweep to fail so we can exercise retry
+  const cfg = perOrderConfig();
+  cfg.adminToken = 'secret-admin';
+  const container = buildContainer(cfg, { chainClient: tron, tronWallet: tron, tronTreasury: tron });
+  const server = createHttpServer(container);
+  await new Promise<void>((r) => server.listen(0, r));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const auth = { Authorization: 'Bearer secret-admin' };
+
+  try {
+    // Settle an order, then drive its sweep to FAILED (maxAttempts=3).
+    const { order } = await container.payments.createOrder({ userId: 'u1', planId: 'monthly', method: 'usdt' });
+    tron.deposit(order.metadata['depositAddress'], order.amount, 'dep-1');
+    tron.trx.set(order.metadata['depositAddress'], 20_000_000); // pre-funded gas -> sweep fails directly
+    await container.payments.syncOrder(order.id);
+    for (let i = 0; i < 3; i++) await container.sweepService!.processDue();
+
+    // List FAILED sweeps.
+    const listRes = await fetch(`${base}/admin/sweeps?status=FAILED`, { headers: auth });
+    assert.equal(listRes.status, 200);
+    const list = await getJson(listRes);
+    assert.equal(list.total, 1);
+    assert.equal(list.items[0].orderId, order.id);
+    assert.equal(list.items[0].status, 'FAILED');
+
+    // Requeue it (after "topping up" — clear the failure flag), then finish it.
+    tron.failSweep = false;
+    const retryRes = await fetch(`${base}/admin/sweeps/${order.id}/retry`, { method: 'POST', headers: auth });
+    assert.equal(retryRes.status, 200);
+    assert.equal((await getJson(retryRes)).requeued, true);
+
+    for (let i = 0; i < 5; i++) await container.sweepService!.processDue();
+    assert.equal(await tron.trc20BalanceMicro(COLLECTION), order.amount, 'funds collected after retry');
+
+    // Unknown order -> 404.
+    const missRes = await fetch(`${base}/admin/sweeps/nope/retry`, { method: 'POST', headers: auth });
+    assert.equal(missRes.status, 404);
+
+    // Unauthorized without the admin token.
+    assert.equal((await fetch(`${base}/admin/sweeps`)).status, 401);
+  } finally {
+    await new Promise<void>((r) => server.close(() => r()));
+  }
+});
+
+test('admin sweep endpoints return 404 NOT_ENABLED in shared mode', async () => {
+  const cfg: AppConfig = {
+    port: 0, orderTtlMinutes: 15, enabledMethods: [], expiryReminderDays: 3, processedEventTtlDays: 7,
+    shutdownTimeoutMs: 10000, adminToken: 'secret-admin',
+    rateLimit: { enabled: false, max: 100, windowMs: 60_000 },
+    security: { corsOrigins: ['*'], requestTimeoutMs: 15000, maxBodyBytes: 1000000, securityHeaders: true },
+  };
+  const container = buildContainer(cfg);
+  const server = createHttpServer(container);
+  await new Promise<void>((r) => server.listen(0, r));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  try {
+    const res = await fetch(`${base}/admin/sweeps`, { headers: { Authorization: 'Bearer secret-admin' } });
+    assert.equal(res.status, 404);
+    assert.equal((await getJson(res)).error, 'NOT_ENABLED');
+  } finally {
+    await new Promise<void>((r) => server.close(() => r()));
+  }
 });

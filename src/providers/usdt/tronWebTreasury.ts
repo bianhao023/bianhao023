@@ -135,6 +135,8 @@ interface TronTrxNamespace {
 interface TronAddressUtil {
   /** Convert a `41…` hex address to its base58 `T…` form. */
   fromHex(hex: string): string;
+  /** Derive the base58 `T…` address that owns `privateKey`. */
+  fromPrivateKey(privateKey: string): string;
 }
 
 /** A live TronWeb instance (the bits this adapter calls). */
@@ -183,6 +185,8 @@ export class TronWebTreasury implements TronWallet, TronTreasury {
   private readonly base: TronWebLike;
   /** Effective base HD path prefix (`cfg.hdPath` or the TRON default). */
   private readonly hdPath: string;
+  /** Cached fee-wallet base58 address (derived lazily from feePrivateKey). */
+  private feeAddress?: string;
 
   constructor(private readonly cfg: TronWebTreasuryConfig) {
     // Lazy load: no hard dependency on `tronweb` for the shared-address flow/tests.
@@ -237,6 +241,12 @@ export class TronWebTreasury implements TronWallet, TronTreasury {
   async trxBalanceSun(address: string): Promise<number> {
     const sun = await this.base.trx.getBalance(address);
     return Number(sun);
+  }
+
+  /** TRX balance of the fee (gas) wallet in sun, for balance monitoring/alerts. */
+  async feeBalanceSun(): Promise<number> {
+    this.feeAddress ??= this.base.address.fromPrivateKey(this.cfg.feePrivateKey);
+    return this.trxBalanceSun(this.feeAddress);
   }
 
   /** Fund `toAddress` with `amountSun` TRX from the fee wallet. Returns the txid. */

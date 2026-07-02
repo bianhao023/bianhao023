@@ -480,6 +480,41 @@ export function buildOpenApiSpec(enabledMethods: string[]): Record<string, unkno
           },
         },
       },
+      '/admin/sweeps': {
+        get: {
+          tags: ['Admin'],
+          summary: 'List USDT sweep (二次归集) jobs',
+          operationId: 'adminListSweeps',
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            { name: 'status', in: 'query', required: false, description: 'Filter by sweep status (PENDING, GAS_FUELING, SWEEPING, SWEPT, EMPTY, FAILED).', schema: { type: 'string' } },
+            ...paginationParams(),
+          ],
+          responses: {
+            '200': jsonResponse('Paginated sweep jobs.', { type: 'object', additionalProperties: true }),
+            '401': errorResponse('Missing or invalid admin token.'),
+            '403': errorResponse('Admin endpoints disabled.'),
+            '404': errorResponse('Per-order USDT sweeping is not enabled.'),
+          },
+        },
+      },
+      '/admin/sweeps/{orderId}/retry': {
+        post: {
+          tags: ['Admin'],
+          summary: 'Requeue a FAILED USDT sweep job',
+          operationId: 'adminRetrySweep',
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            { name: 'orderId', in: 'path', required: true, description: 'Order id of the FAILED sweep.', schema: { type: 'string' } },
+          ],
+          responses: {
+            '200': jsonResponse('The requeued sweep job.', { type: 'object', additionalProperties: true }),
+            '401': errorResponse('Missing or invalid admin token.'),
+            '403': errorResponse('Admin endpoints disabled.'),
+            '404': errorResponse('No FAILED sweep for that order, or sweeping not enabled.'),
+          },
+        },
+      },
       '/admin/orders.csv': {
         get: {
           tags: ['Admin'],

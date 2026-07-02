@@ -62,6 +62,11 @@ export interface UsdtConfig {
   hdStartIndex: number;
   /** Sweep policy (per-order mode). */
   sweep: UsdtSweepPolicy;
+  /**
+   * Fee-wallet balance (sun) below which a low-gas alert fires. When unset,
+   * defaults to 10× the per-sweep gas top-up (≈10 more sweeps of runway).
+   */
+  feeWalletMinSun?: number;
   /** TRC20 contract address (defaults to the canonical USDT contract). */
   contractAddress: string;
   /** TronGrid (or compatible) API base. */
@@ -213,6 +218,7 @@ export function loadConfig(): AppConfig {
         maxAttempts: Number(env('USDT_SWEEP_MAX_ATTEMPTS', '10')),
         backoffMs: Number(env('USDT_SWEEP_BACKOFF_SEC', '60')) * 1000,
       },
+      feeWalletMinSun: env('USDT_FEE_WALLET_MIN_SUN') ? Number(env('USDT_FEE_WALLET_MIN_SUN')) : undefined,
       contractAddress: env('USDT_CONTRACT_ADDRESS', CANONICAL_USDT_TRC20),
       apiBase: env('USDT_API_BASE', 'https://api.trongrid.io'),
       apiKey: env('USDT_API_KEY') || undefined,

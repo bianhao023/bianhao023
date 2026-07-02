@@ -95,6 +95,7 @@ async function main(): Promise<void> {
 
   container.usdtWatcher?.start();
   container.sweepWatcher?.start();
+  container.sweepAlertWatcher?.start();
   container.expiryWatcher.start();
   container.webhookWatcher?.start();
   container.fxProvider?.start();
@@ -108,6 +109,7 @@ async function main(): Promise<void> {
     stoppers: [
       () => container.usdtWatcher?.stop(),
       () => container.sweepWatcher?.stop(),
+      () => container.sweepAlertWatcher?.stop(),
       () => container.expiryWatcher.stop(),
       () => container.webhookWatcher?.stop(),
       () => container.fxProvider?.stop(),

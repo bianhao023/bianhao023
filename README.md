@@ -5,7 +5,7 @@ A commercial-grade payment backend for a VPN service, supporting **WeChat Pay**,
 dependencies** (only Node.js ≥ 20 built-ins: `crypto`, `http`, `fetch`), which
 keeps it auditable, easy to deploy, and free of payment-SDK supply-chain risk.
 
-> Status: builds clean (`tsc`, strict mode) and passes **310 automated tests**
+> Status: builds clean (`tsc`, strict mode) and passes **327 automated tests**
 > covering signing, callbacks, the order state machine, idempotency & dedupe
 > retention, concurrency, amount validation, USDT reconciliation, refunds
 > (full/partial/manual and asynchronous PROCESSING→final settlement), subscription
@@ -85,6 +85,12 @@ All amounts are integer **minor units** to avoid floating-point errors:
   like `pg`/`redis`; the orchestration is fully unit-tested against a fake chain.
   Requires a funded fee wallet (`USDT_FEE_PRIVATE_KEY`) and a hot-wallet mnemonic
   (`USDT_HD_MNEMONIC`) — keep both in a secret manager. See `docs/GO-LIVE.md`.
+- **Sweep observability & ops**: Prometheus gauges (`vpn_sweep_jobs{status}`,
+  `vpn_sweep_pending`, `vpn_sweep_failed`, `vpn_sweep_amount_micro_total`,
+  `vpn_fee_wallet_trx_sun`), automatic alerts on FAILED sweeps and a low fee
+  wallet (an empty gas wallet stalls all sweeps), and admin endpoints
+  `GET /admin/sweeps` (list/filter by status) + `POST /admin/sweeps/{orderId}/retry`
+  (requeue a FAILED job after topping up the fee wallet).
 - **Deep readiness**: `/readyz` aggregates isolated health checks (each with its
   own timeout). When a SQL/Redis client is injected, real `SELECT 1` / `PING`
   probes are added — SQL is critical (its outage returns 503), Redis is not
