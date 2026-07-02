@@ -16,7 +16,7 @@ async function getJson(res: Response): Promise<any> {
 }
 
 function start(adminToken?: string, adminTokenPrevious?: string): Promise<{ base: string; server: Server }> {
-  const config: AppConfig = { port: 0, orderTtlMinutes: 15, enabledMethods: [], expiryReminderDays: 3, processedEventTtlDays: 7, adminToken, adminTokenPrevious, rateLimit: { enabled: false, max: 100, windowMs: 60000 }, security: { corsOrigins: [], requestTimeoutMs: 15000, maxBodyBytes: 1000000, securityHeaders: true } };
+  const config: AppConfig = { port: 0, orderTtlMinutes: 15, enabledMethods: [], expiryReminderDays: 3, processedEventTtlDays: 7, shutdownTimeoutMs: 10000, adminToken, adminTokenPrevious, rateLimit: { enabled: false, max: 100, windowMs: 60000 }, security: { corsOrigins: [], requestTimeoutMs: 15000, maxBodyBytes: 1000000, securityHeaders: true } };
   const providers = new Map<PaymentMethod, PaymentProvider>([['wechat', new FakeProvider('wechat')]]);
   const container = buildContainer(config, { providers });
   const server = createHttpServer(container);

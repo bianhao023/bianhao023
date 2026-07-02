@@ -112,6 +112,8 @@ export interface AppConfig {
   expiryReminderDays: number;
   /** Days to retain processed-event dedupe records before cleanup. */
   processedEventTtlDays: number;
+  /** Max ms to wait for in-flight requests to drain on shutdown before forcing. */
+  shutdownTimeoutMs: number;
   rateLimit: RateLimitConfig;
   security: SecurityConfig;
   wechat?: WechatConfig;
@@ -218,6 +220,7 @@ export function loadConfig(): AppConfig {
     adminTokenPrevious: env('ADMIN_TOKEN_PREVIOUS') || undefined,
     expiryReminderDays: Number(env('EXPIRY_REMINDER_DAYS', '3')),
     processedEventTtlDays: Number(env('PROCESSED_EVENT_TTL_DAYS', '7')),
+    shutdownTimeoutMs: Number(env('SHUTDOWN_TIMEOUT_MS', '10000')),
     rateLimit: {
       enabled: env('RATE_LIMIT_ENABLED', 'true') !== 'false',
       max: Number(env('RATE_LIMIT_MAX', '100')),

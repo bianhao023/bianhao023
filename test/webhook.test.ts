@@ -102,7 +102,7 @@ test('retry requeues a dead delivery for immediate delivery', async () => {
 
 function cfg(): AppConfig {
   return {
-    port: 0, orderTtlMinutes: 15, enabledMethods: [], expiryReminderDays: 3, processedEventTtlDays: 7,
+    port: 0, orderTtlMinutes: 15, enabledMethods: [], expiryReminderDays: 3, processedEventTtlDays: 7, shutdownTimeoutMs: 10000,
     rateLimit: { enabled: false, max: 100, windowMs: 60000 }, security: { corsOrigins: [], requestTimeoutMs: 15000, maxBodyBytes: 1000000, securityHeaders: true }, webhook: CFG,
   };
 }

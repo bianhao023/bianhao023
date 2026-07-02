@@ -5,7 +5,7 @@ A commercial-grade payment backend for a VPN service, supporting **WeChat Pay**,
 dependencies** (only Node.js ≥ 20 built-ins: `crypto`, `http`, `fetch`), which
 keeps it auditable, easy to deploy, and free of payment-SDK supply-chain risk.
 
-> Status: builds clean (`tsc`, strict mode) and passes **251 automated tests**
+> Status: builds clean (`tsc`, strict mode) and passes **254 automated tests**
 > covering signing, callbacks, the order state machine, idempotency & dedupe
 > retention, concurrency, amount validation, USDT reconciliation, refunds
 > (full/partial/manual and asynchronous PROCESSING→final settlement), subscription
@@ -449,6 +449,10 @@ docker run -p 3000:3000 --env-file .env vpn-payment-backend
 # or
 docker compose up --build
 ```
+
+On `SIGINT`/`SIGTERM` the server shuts down gracefully (`src/lifecycle/gracefulShutdown.ts`):
+background workers are stopped, in-flight requests are drained, and any lingering
+sockets are force-closed after `SHUTDOWN_TIMEOUT_MS`.
 
 The runtime image is a slim `node:22-alpine` containing only the compiled
 `dist/` (no runtime `node_modules`, since the app has zero runtime deps), runs

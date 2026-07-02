@@ -1,6 +1,7 @@
 import { loadConfig } from './config';
 import { buildContainer } from './container';
 import { createHttpServer } from './api/server';
+import { GracefulShutdown } from './lifecycle/gracefulShutdown';
 import { logger } from './utils/logger';
 
 /** Process entrypoint: load config, wire the system, start the server + watcher. */
@@ -20,6 +21,20 @@ function main(): void {
   container.fxProvider?.start();
 
   const server = createHttpServer(container);
+
+  // Graceful shutdown: stop background workers, drain in-flight requests, then
+  // force any lingering sockets closed after the configured timeout.
+  const graceful = new GracefulShutdown(server, {
+    timeoutMs: config.shutdownTimeoutMs,
+    stoppers: [
+      () => container.usdtWatcher?.stop(),
+      () => container.expiryWatcher.stop(),
+      () => container.webhookWatcher?.stop(),
+      () => container.fxProvider?.stop(),
+    ],
+  });
+  graceful.install();
+
   server.listen(config.port, () => {
     logger.info('vpn-payment-backend listening', {
       port: config.port,
@@ -27,18 +42,17 @@ function main(): void {
     });
   });
 
-  const shutdown = (sig: string) => {
+  let shuttingDown = false;
+  const shutdown = async (sig: string): Promise<void> => {
+    if (shuttingDown) return;
+    shuttingDown = true;
     logger.info('shutting down', { signal: sig });
-    container.usdtWatcher?.stop();
-    container.expiryWatcher.stop();
-    container.webhookWatcher?.stop();
-    container.fxProvider?.stop();
-    server.close(() => process.exit(0));
-    // Force-exit if connections do not drain promptly.
-    setTimeout(() => process.exit(0), 5000).unref();
+    const result = await graceful.shutdown();
+    logger.info('shutdown complete', { result });
+    process.exit(0);
   };
-  process.on('SIGINT', () => shutdown('SIGINT'));
-  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => void shutdown('SIGINT'));
+  process.on('SIGTERM', () => void shutdown('SIGTERM'));
 }
 
 main();

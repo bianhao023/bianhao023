@@ -22,7 +22,7 @@ function buildConfig(): AppConfig {
     orderTtlMinutes: 15,
     enabledMethods: ['wechat'],
     adminToken: 'e2e-admin',
-    expiryReminderDays: 3, processedEventTtlDays: 7,
+    expiryReminderDays: 3, processedEventTtlDays: 7, shutdownTimeoutMs: 10000,
     rateLimit: { enabled: false, max: 100, windowMs: 60_000 },
     security: { corsOrigins: [], requestTimeoutMs: 15000, maxBodyBytes: 1000000, securityHeaders: true },
   };

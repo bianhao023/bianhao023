@@ -10,7 +10,7 @@ import { FakeProvider } from './_helpers';
 
 function config(): AppConfig {
   return {
-    port: 0, orderTtlMinutes: 15, enabledMethods: [], expiryReminderDays: 3, processedEventTtlDays: 7,
+    port: 0, orderTtlMinutes: 15, enabledMethods: [], expiryReminderDays: 3, processedEventTtlDays: 7, shutdownTimeoutMs: 10000,
     adminToken: 'x',
     rateLimit: { enabled: false, max: 100, windowMs: 60000 },
     security: { corsOrigins: [], requestTimeoutMs: 15000, maxBodyBytes: 1000000, securityHeaders: true },
