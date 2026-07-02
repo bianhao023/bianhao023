@@ -15,8 +15,11 @@ FROM node:22-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 
-# The app has zero runtime dependencies, so only the compiled output is needed.
-COPY package.json ./
+# The core has zero runtime dependencies; persistence adds the optional `pg` and
+# `redis` drivers (installed only when DATABASE_URL/REDIS_URL are configured).
+# `npm ci --omit=dev` installs prod + optional deps but skips devDependencies.
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=build /app/dist ./dist
 
 # Run as the unprivileged built-in node user.

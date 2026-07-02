@@ -8,7 +8,7 @@
     "node": ">=20.0.0"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node -e \"const fs=require('fs');fs.mkdirSync('dist/src/storage/sql',{recursive:true});fs.copyFileSync('src/storage/sql/schema.sql','dist/src/storage/sql/schema.sql')\"",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "clean": "rm -rf dist",
     "test": "npm run build && node --test dist/test/*.test.js",
@@ -23,5 +23,9 @@
   "devDependencies": {
     "@types/node": "^20.0.0",
     "typescript": "^5.4.0"
+  },
+  "optionalDependencies": {
+    "pg": "^8.22.0",
+    "redis": "^4.6.0"
   }
 }

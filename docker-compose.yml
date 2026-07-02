@@ -1,50 +1,103 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Production-oriented Docker Compose for the VPN payment backend.
+#
+# Services:
+#   db     – PostgreSQL 16 (durable state; the app runs schema.sql on boot)
+#   redis  – Redis 7 (distributed rate limiting across app replicas)
+#   app    – the payment backend (built from the repo Dockerfile)
+#
+# IMPORTANT — TLS / HTTPS:
+#   The `app` service speaks PLAIN HTTP only. You MUST place an external reverse
+#   proxy / ingress (nginx, Caddy, a cloud load balancer, …) in front of it to
+#   terminate TLS on 443. WeChat Pay and Alipay will only deliver their payment
+#   callbacks to a PUBLIC HTTPS URL, so terminating TLS is mandatory in prod.
+#   See docs/GO-LIVE.md §6 (反向代理 / TLS) for an nginx example.
+#
+# Quickstart:
+#   cp .env.example .env      # then fill in secrets
+#   docker compose up -d --build
+#   curl -fsS http://127.0.0.1:3000/healthz     # liveness
+#   curl -fsS http://127.0.0.1:3000/readyz      # deep readiness (DB+Redis)
+#
+# All values use ${VAR:-default} interpolation so a plain `.env` is enough.
+# ─────────────────────────────────────────────────────────────────────────────
+
 services:
-  app:
-    build: .
+  # ── PostgreSQL ────────────────────────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
     restart: unless-stopped
-    ports:
-      - "${PORT:-3000}:3000"
+    environment:
+      # Sourced from the shell/.env with sane development defaults.
+      POSTGRES_USER: ${POSTGRES_USER:-vpn}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vpn}
+      POSTGRES_DB: ${POSTGRES_DB:-vpn_payments}
+    volumes:
+      # Named volume keeps data across container recreation.
+      - pgdata:/var/lib/postgresql/data
+    # Not published to the host by default — only reachable on the compose
+    # network by `app`. Uncomment `ports:` below ONLY for local debugging.
+    expose:
+      - "5432"
+    # ports:
+    #   - "5432:5432"   # optional: publish for psql/debugging from the host
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-vpn} -d ${POSTGRES_DB:-vpn_payments}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ── Redis (distributed rate limiting) ─────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # Not published to the host; only the app talks to it.
+    expose:
+      - "6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  # ── Application ───────────────────────────────────────────────────────────
+  app:
+    build: .                       # uses the multi-stage Dockerfile at repo root
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # Load provider keys and all other config from .env (see .env.example).
+    env_file: .env
     environment:
       PORT: 3000
-      ORDER_TTL_MINUTES: ${ORDER_TTL_MINUTES:-15}
-      LOG_LEVEL: ${LOG_LEVEL:-info}
-      # WeChat Pay
-      WECHAT_APP_ID: ${WECHAT_APP_ID:-}
-      WECHAT_MCH_ID: ${WECHAT_MCH_ID:-}
-      WECHAT_PRIVATE_KEY: ${WECHAT_PRIVATE_KEY:-}
-      WECHAT_SERIAL_NO: ${WECHAT_SERIAL_NO:-}
-      WECHAT_API_V3_KEY: ${WECHAT_API_V3_KEY:-}
-      WECHAT_PLATFORM_PUBLIC_KEY: ${WECHAT_PLATFORM_PUBLIC_KEY:-}
-      WECHAT_NOTIFY_URL: ${WECHAT_NOTIFY_URL:-}
-      # Alipay
-      ALIPAY_APP_ID: ${ALIPAY_APP_ID:-}
-      ALIPAY_PRIVATE_KEY: ${ALIPAY_PRIVATE_KEY:-}
-      ALIPAY_PUBLIC_KEY: ${ALIPAY_PUBLIC_KEY:-}
-      ALIPAY_NOTIFY_URL: ${ALIPAY_NOTIFY_URL:-}
-      # USDT (TRC20)
-      USDT_RECEIVING_ADDRESS: ${USDT_RECEIVING_ADDRESS:-}
-      USDT_CONTRACT_ADDRESS: ${USDT_CONTRACT_ADDRESS:-}
-      USDT_API_BASE: ${USDT_API_BASE:-https://api.trongrid.io}
-      USDT_API_KEY: ${USDT_API_KEY:-}
-      USDT_MIN_CONFIRMATIONS: ${USDT_MIN_CONFIRMATIONS:-19}
-    # To enable Postgres-backed storage, provide a DATABASE_URL and wire the
-    # SqlRepository implementations in your container (see src/storage/sql).
-    # depends_on:
-    #   - db
+      # Reach the compose services by their service names on the internal
+      # network. These override anything in .env so the container always points
+      # at the bundled db/redis. The app runs schema migrations automatically
+      # on boot when DATABASE_URL is set.
+      DATABASE_URL: postgres://${POSTGRES_USER:-vpn}:${POSTGRES_PASSWORD:-vpn}@db:5432/${POSTGRES_DB:-vpn_payments}
+      REDIS_URL: redis://redis:6379
+    ports:
+      # Expose HTTP to the host so the external TLS proxy can reach it.
+      # In production, bind this to localhost (e.g. "127.0.0.1:3000:3000") and
+      # let the reverse proxy be the only public listener.
+      - "${PORT:-3000}:3000"
+    healthcheck:
+      # Alpine/distroless-style images may lack curl; use Node's built-in fetch.
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
 
-  # Uncomment to run PostgreSQL alongside the app.
-  # db:
-  #   image: postgres:16-alpine
-  #   restart: unless-stopped
-  #   environment:
-  #     POSTGRES_USER: vpn
-  #     POSTGRES_PASSWORD: vpn
-  #     POSTGRES_DB: vpn_payments
-  #   volumes:
-  #     - pgdata:/var/lib/postgresql/data
-  #     - ./src/storage/sql/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
-  #   ports:
-  #     - "5432:5432"
-
-# volumes:
-#   pgdata:
+# ── Named volumes ───────────────────────────────────────────────────────────
+volumes:
+  pgdata:

@@ -1,13 +1,65 @@
 import { loadConfig } from './config';
-import { buildContainer } from './container';
+import { buildContainer, ContainerOverrides } from './container';
 import { createHttpServer } from './api/server';
 import { GracefulShutdown } from './lifecycle/gracefulShutdown';
 import { logger } from './utils/logger';
+import { createPgClient, runMigrations, PgClientHandle } from './storage/sql/pgClient';
+import { createRedisClient, RedisHandle } from './storage/redisClient';
+import { SqlOrderRepository, SqlRefundRepository, SqlSubscriptionRepository, SqlProcessedEventStore } from './storage/sql/sqlStore';
+import { SqlUserRepository } from './storage/sql/sqlUserStore';
+import { SqlAuditLog } from './storage/sql/sqlAuditLog';
+import { RedisRateLimiter } from './api/redisRateLimiter';
+
+/**
+ * Assemble container overrides from the environment. When `DATABASE_URL` is set,
+ * all repositories are backed by PostgreSQL (schema applied on boot) so state
+ * survives restarts — required for a real deployment. When `REDIS_URL` is set,
+ * rate limiting is Redis-backed so it is correct across multiple instances.
+ * Returns the overrides plus any resources that must be closed on shutdown.
+ */
+async function buildOverrides(): Promise<{
+  overrides: ContainerOverrides;
+  closers: Array<() => Promise<void> | void>;
+}> {
+  const overrides: ContainerOverrides = {};
+  const closers: Array<() => Promise<void> | void> = [];
+
+  const databaseUrl = process.env.DATABASE_URL;
+  if (databaseUrl) {
+    const pg: PgClientHandle = createPgClient(databaseUrl);
+    await runMigrations(pg.client);
+    overrides.orders = new SqlOrderRepository(pg.client);
+    overrides.refunds = new SqlRefundRepository(pg.client);
+    overrides.subscriptions = new SqlSubscriptionRepository(pg.client);
+    overrides.processedEvents = new SqlProcessedEventStore(pg.client);
+    overrides.users = new SqlUserRepository(pg.client);
+    overrides.audit = new SqlAuditLog(pg.client);
+    overrides.readinessSql = pg.client;
+    closers.push(() => pg.end());
+    logger.info('storage backend: postgres');
+  } else {
+    logger.warn('DATABASE_URL not set — using in-memory storage (state is LOST on restart; not for production)');
+  }
+
+  const redisUrl = process.env.REDIS_URL;
+  if (redisUrl) {
+    const redis: RedisHandle = await createRedisClient(redisUrl);
+    const max = Number(process.env.RATE_LIMIT_MAX ?? '100');
+    const windowMs = Number(process.env.RATE_LIMIT_WINDOW_SEC ?? '60') * 1000;
+    overrides.rateLimiter = new RedisRateLimiter(redis, max, windowMs);
+    overrides.readinessRedis = redis;
+    closers.push(() => redis.quit());
+    logger.info('rate limiter backend: redis (cross-instance)');
+  }
+
+  return { overrides, closers };
+}
 
 /** Process entrypoint: load config, wire the system, start the server + watcher. */
-function main(): void {
+async function main(): Promise<void> {
   const config = loadConfig();
-  const container = buildContainer(config);
+  const { overrides, closers } = await buildOverrides();
+  const container = buildContainer(config, overrides);
 
   if (container.enabledMethods.length === 0) {
     logger.warn(
@@ -22,8 +74,8 @@ function main(): void {
 
   const server = createHttpServer(container);
 
-  // Graceful shutdown: stop background workers, drain in-flight requests, then
-  // force any lingering sockets closed after the configured timeout.
+  // Graceful shutdown: stop background workers, drain in-flight requests, close
+  // external resources (DB/Redis), then force lingering sockets after timeout.
   const graceful = new GracefulShutdown(server, {
     timeoutMs: config.shutdownTimeoutMs,
     stoppers: [
@@ -31,6 +83,7 @@ function main(): void {
       () => container.expiryWatcher.stop(),
       () => container.webhookWatcher?.stop(),
       () => container.fxProvider?.stop(),
+      ...closers,
     ],
   });
   graceful.install();
@@ -55,4 +108,7 @@ function main(): void {
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
 }
 
-main();
+main().catch((err) => {
+  logger.error('fatal: failed to start', { error: (err as Error).message, stack: (err as Error).stack });
+  process.exit(1);
+});

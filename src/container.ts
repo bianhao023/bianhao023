@@ -47,7 +47,7 @@ import { TemplatedEmailNotifier } from './notifications/emailNotifier';
 import { SmtpMailSender } from './notifications/smtpMailSender';
 import { Metrics } from './observability/metrics';
 import { RouterMetrics, RateLimitOptions } from './api/http';
-import { RateLimiter } from './api/rateLimiter';
+import { RateLimiter, RateLimiterLike } from './api/rateLimiter';
 
 /** Overrides used by tests to inject fakes / fixed clocks. */
 export interface ContainerOverrides {
@@ -69,6 +69,8 @@ export interface ContainerOverrides {
   readinessSql?: SqlClient;
   /** Redis client to include as a non-critical `/readyz` ping. */
   readinessRedis?: PingableRedis;
+  /** Distributed rate limiter (e.g. Redis-backed) replacing the in-process one. */
+  rateLimiter?: RateLimiterLike;
 }
 
 export interface Container {
@@ -276,8 +278,10 @@ export function buildContainer(config: AppConfig, overrides: ContainerOverrides 
   // ── Rate limiting ───────────────────────────────────────────────────────
   let rateLimit: RateLimitOptions | undefined;
   if (config.rateLimit.enabled) {
+    // Use the injected (e.g. Redis-backed, cross-instance) limiter when present,
+    // else the in-process fixed-window limiter (correct only single-instance).
     rateLimit = {
-      limiter: new RateLimiter(config.rateLimit.max, config.rateLimit.windowMs, now),
+      limiter: overrides.rateLimiter ?? new RateLimiter(config.rateLimit.max, config.rateLimit.windowMs, now),
       skipRoutes: new Set(['/healthz', '/metrics']),
     };
   }

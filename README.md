@@ -5,7 +5,7 @@ A commercial-grade payment backend for a VPN service, supporting **WeChat Pay**,
 dependencies** (only Node.js ≥ 20 built-ins: `crypto`, `http`, `fetch`), which
 keeps it auditable, easy to deploy, and free of payment-SDK supply-chain risk.
 
-> Status: builds clean (`tsc`, strict mode) and passes **278 automated tests**
+> Status: builds clean (`tsc`, strict mode) and passes **289 automated tests**
 > covering signing, callbacks, the order state machine, idempotency & dedupe
 > retention, concurrency, amount validation, USDT reconciliation, refunds
 > (full/partial/manual and asynchronous PROCESSING→final settlement), subscription
@@ -502,25 +502,31 @@ The storage layer is interface-based (`OrderRepository`, `RefundRepository`,
 `SubscriptionRepository`, `ProcessedEventStore`, `Locker`). The included
 in-memory implementations are used for tests and single-process demos.
 
-For production, **PostgreSQL** implementations are provided in
-`src/storage/sql/` (`SqlOrderRepository`, `SqlRefundRepository`,
-`SqlSubscriptionRepository`, `SqlProcessedEventStore`) plus `schema.sql`. They
-target an injected `SqlClient` interface that is compatible with `node-postgres`,
-so the package keeps **zero hard dependencies** — add `pg` only if you use them:
+For production this is **wired automatically from the environment** — no code
+changes required. Set `DATABASE_URL` and the entrypoint builds the PostgreSQL
+repositories (`SqlOrderRepository`, `SqlRefundRepository`,
+`SqlSubscriptionRepository`, `SqlProcessedEventStore`, `SqlUserRepository`,
+`SqlAuditLog`), **applies `schema.sql` on boot** (idempotent — `CREATE … IF NOT
+EXISTS`), and adds a critical Postgres check to `/readyz`. Set `REDIS_URL` and
+rate limiting becomes Redis-backed (correct across replicas) with a Redis
+readiness check. The `pg`/`redis` drivers are **optional dependencies**, loaded
+lazily only when their URL is set, so the core keeps zero hard dependencies.
 
-```ts
-import { Pool } from 'pg';
-import { buildContainer } from './container';
-import { SqlOrderRepository, SqlRefundRepository, SqlSubscriptionRepository, SqlProcessedEventStore } from './storage/sql/sqlStore';
-
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-const container = buildContainer(config, {
-  orders: new SqlOrderRepository(pool),
-  refunds: new SqlRefundRepository(pool),
-  subscriptions: new SqlSubscriptionRepository(pool),
-  processedEvents: new SqlProcessedEventStore(pool),
-});
+```bash
+# Production: persistent Postgres + cross-instance Redis, migrations on boot.
+DATABASE_URL=postgres://user:pass@host:5432/vpn_payments \
+REDIS_URL=redis://host:6379 \
+npm start
 ```
+
+> **Go-live runbook:** see [`docs/GO-LIVE.md`](docs/GO-LIVE.md) for the full,
+> ordered production checklist — prerequisites, `.env`, migrations & backups,
+> reverse-proxy/TLS, provider callback registration, acceptance checklist,
+> observability, security hardening, and rollback. A ready-to-run
+> `docker-compose.yml` (app + Postgres + Redis) is included at the repo root.
+
+The storage layer stays interface-based, so you can still inject custom
+repositories via `buildContainer(config, overrides)` for tests or other stores.
 
 `SqlProcessedEventStore.markIfNew` uses `INSERT … ON CONFLICT DO NOTHING`, which
 is atomic across multiple application instances, so callbacks are still

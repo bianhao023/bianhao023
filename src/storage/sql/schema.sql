@@ -76,3 +76,16 @@ CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_events (action);
 CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_events (actor);
 CREATE INDEX IF NOT EXISTS idx_audit_subject ON audit_events (subject_id);
 CREATE INDEX IF NOT EXISTS idx_audit_at ON audit_events (at);
+
+-- Registered accounts. The UNIQUE constraints on email and api_key back
+-- findByEmail / findByApiKey, so no extra indexes are needed.
+CREATE TABLE IF NOT EXISTS users (
+  id            TEXT PRIMARY KEY,
+  email         TEXT NOT NULL UNIQUE,
+  locale        TEXT NOT NULL,
+  name          TEXT,
+  password_hash TEXT NOT NULL,
+  api_key       TEXT NOT NULL UNIQUE,
+  created_at    BIGINT NOT NULL,
+  updated_at    BIGINT NOT NULL
+);
