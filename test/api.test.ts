@@ -214,6 +214,20 @@ test('public routes are also served under the /api/v1 prefix', async () => {
   }
 });
 
+test('readiness probe reports ok with per-check detail', async () => {
+  const { base, server } = await startServer();
+  try {
+    const res = await fetch(`${base}/readyz`);
+    assert.equal(res.status, 200);
+    const body = await getJson(res);
+    assert.equal(body.status, 'ok');
+    assert.ok(Array.isArray(body.checks));
+    assert.ok(body.checks.some((c: any) => c.name === 'core' && c.ok));
+  } finally {
+    server.close();
+  }
+});
+
 test('version endpoint and X-API-Version header', async () => {
   const { base, server } = await startServer();
   try {

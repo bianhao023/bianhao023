@@ -14,6 +14,7 @@ export function apiDepsFromContainer(container: Container): ApiDeps {
     reconciliation: container.reconciliation,
     audit: container.audit,
     pricing: container.pricing,
+    readiness: container.readiness,
     alertSink: container.alertSink,
     processedEvents: container.processedEvents,
     processedEventTtlMs: container.config.processedEventTtlDays * 24 * 60 * 60 * 1000,

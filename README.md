@@ -5,7 +5,7 @@ A commercial-grade payment backend for a VPN service, supporting **WeChat Pay**,
 dependencies** (only Node.js ≥ 20 built-ins: `crypto`, `http`, `fetch`), which
 keeps it auditable, easy to deploy, and free of payment-SDK supply-chain risk.
 
-> Status: builds clean (`tsc`, strict mode) and passes **238 automated tests**
+> Status: builds clean (`tsc`, strict mode) and passes **251 automated tests**
 > covering signing, callbacks, the order state machine, idempotency & dedupe
 > retention, concurrency, amount validation, USDT reconciliation, refunds
 > (full/partial/manual and asynchronous PROCESSING→final settlement), subscription
@@ -92,6 +92,7 @@ run with any subset of WeChat / Alipay / USDT configured.
 | Method & path | Description |
 |---|---|
 | `GET /healthz` | Liveness + enabled methods |
+| `GET /readyz` | Deep readiness probe (200 ready / 503 degraded) |
 | `GET /version` | App/API version + supported API versions |
 | `GET /openapi.json` | OpenAPI 3.0.3 specification |
 | `GET /docs` | Swagger UI (interactive API docs) |

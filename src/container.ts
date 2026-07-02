@@ -34,6 +34,7 @@ import { AuditLog, InMemoryAuditLog } from './audit/auditLog';
 import { WebhookDispatcher, MemoryWebhookRepository, OutboundEmitter } from './webhooks/outbound';
 import { WebhookWatcher } from './webhooks/webhookWatcher';
 import { Alert } from './alerting/alertFormatter';
+import { ReadinessAggregator, HealthCheck } from './health/readiness';
 import { logger } from './utils/logger';
 import { PricingService } from './pricing/pricingService';
 import { StaticExchangeRateProvider, DEMO_RATES_FROM_CNY, ExchangeRateProvider } from './pricing/exchangeRates';
@@ -76,6 +77,8 @@ export interface Container {
   reconciliation: ReconciliationService;
   audit: AuditLog;
   pricing: PricingService;
+  /** Deep readiness checks for GET /readyz. */
+  readiness: ReadinessAggregator;
   /** Dispatches an alert to the log and (when configured) the outbound webhook. */
   alertSink: (alert: Alert) => Promise<void>;
   /** Present only when a live FX feed is configured; call start()/stop() to refresh. */
@@ -177,6 +180,24 @@ export function buildContainer(config: AppConfig, overrides: ContainerOverrides 
   }
   const pricing = new PricingService(ratesProvider);
 
+  // Deep readiness checks. 'core' is critical (its failure => 503); the rest are
+  // informational (a stale FX feed or a non-empty DLQ does not remove the node
+  // from the load balancer — the service still serves requests).
+  const readinessChecks: HealthCheck[] = [{ name: 'core', critical: true, run: () => ({ ok: true }) }];
+  if (fxProvider) {
+    readinessChecks.push({
+      name: 'fx',
+      run: () => ({ ok: true, detail: fxProvider!.isStale() ? 'stale (serving fallback)' : 'fresh' }),
+    });
+  }
+  if (webhooks) {
+    readinessChecks.push({
+      name: 'webhooks',
+      run: async () => ({ ok: true, detail: `dead=${(await webhooks!.deadLetterSummary()).count}` }),
+    });
+  }
+  const readiness = new ReadinessAggregator(readinessChecks);
+
   // Alert dispatch: always log; also publish to the merchant webhook if wired.
   const alertSink = async (alert: Alert): Promise<void> => {
     const meta = { title: alert.title, summary: alert.summary, details: alert.details };
@@ -252,7 +273,7 @@ export function buildContainer(config: AppConfig, overrides: ContainerOverrides 
 
   return {
     config, orders, payments, refunds, reports, expiry, expiryWatcher, users,
-    reconciliation, audit, pricing, alertSink, fxProvider, processedEvents, plans,
+    reconciliation, audit, pricing, readiness, alertSink, fxProvider, processedEvents, plans,
     metrics, routerMetrics, rateLimit, security, usdtWatcher, webhooks, webhookWatcher, enabledMethods,
   };
 }

@@ -12,6 +12,7 @@ import { ReconciliationService } from '../services/reconciliationService';
 import { AuditLog } from '../audit/auditLog';
 import { WebhookDispatcher, DeliveryStatus } from '../webhooks/outbound';
 import { PricingService } from '../pricing/pricingService';
+import { ReadinessAggregator } from '../health/readiness';
 import { ProcessedEventStore } from '../storage/repository';
 import { ordersToCsv, refundsToCsv } from '../reporting/csv';
 import { formatReconciliationAlert, Alert } from '../alerting/alertFormatter';
@@ -33,6 +34,7 @@ export interface ApiDeps {
   reconciliation: ReconciliationService;
   audit: AuditLog;
   pricing: PricingService;
+  readiness: ReadinessAggregator;
   alertSink: (alert: Alert) => Promise<void>;
   processedEvents: ProcessedEventStore;
   processedEventTtlMs: number;
@@ -158,6 +160,12 @@ export function buildRouter(deps: ApiDeps): Router {
 
   r.get('/version', (_ctx, res) => {
     sendJson(res, 200, { app: APP_VERSION, api: API_VERSION, supported: SUPPORTED_API_VERSIONS });
+  });
+
+  // Deep readiness probe: 200 when ready, 503 when degraded (report in body).
+  r.get('/readyz', async (_ctx, res) => {
+    const report = await deps.readiness.run();
+    sendJson(res, report.status === 'ok' ? 200 : 503, report);
   });
 
   // Prometheus scrape endpoint (kept open for scrapers; restrict via network policy).

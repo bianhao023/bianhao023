@@ -94,6 +94,27 @@ export function buildOpenApiSpec(enabledMethods: string[]): Record<string, unkno
           },
         },
       },
+      '/readyz': {
+        get: {
+          tags: ['Health'],
+          summary: 'Deep readiness probe (200 ready, 503 degraded)',
+          operationId: 'getReadyz',
+          responses: {
+            '200': jsonResponse('Service is ready.', {
+              type: 'object',
+              properties: {
+                status: { type: 'string', example: 'ok' },
+                checks: { type: 'array', items: { type: 'object' } },
+              },
+              required: ['status', 'checks'],
+            }),
+            '503': jsonResponse('Service is degraded (a critical check failed).', {
+              type: 'object',
+              properties: { status: { type: 'string', example: 'degraded' }, checks: { type: 'array', items: { type: 'object' } } },
+            }),
+          },
+        },
+      },
       '/version': {
         get: {
           tags: ['Health'],
