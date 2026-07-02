@@ -295,6 +295,8 @@ PENDING ──▶ GAS_FUELING ──▶ SWEEPING ──▶ SWEPT
 - **两个热钱包密钥**（务必放入密钥管理，勿明文入库/入 env 常驻）：
   - `USDT_HD_MNEMONIC` 🔒 —— 派生充值地址并在归集时重新派生私钥签名。
   - `USDT_FEE_PRIVATE_KEY` 🔒 —— **费用钱包**，需常备充足 TRX 为每个新充值地址补 gas（`USDT_GAS_TOPUP_SUN`，默认 15 TRX/单）。**费用钱包 TRX 耗尽会导致归集停滞**——纳入余额告警。
+    - **固定地址补 gas**：补 gas 永远从这个（或这些）**固定的费用钱包**发起，绝不使用临时/随机地址；充值地址无需预先充 TRX，归集钱包只收不发。
+    - **费用钱包池（可选一个或几个）**：用 `USDT_FEE_PRIVATE_KEYS`（逗号分隔多个）替代单个 `USDT_FEE_PRIVATE_KEY`，补 gas 会在这几个固定地址间 **轮询（round-robin）**，以规避单地址限流/交易冲突并分散热钱包风险。`vpn_fee_wallet_trx_sun` 上报**池内总余额**——多钱包时把 `USDT_FEE_WALLET_MIN_SUN` 设为 ≈N×单钱包期望余量。
 - `USDT_COLLECTION_ADDRESS` 建议为**冷钱包/多签**，仅收不发。
 - 粉尘阈值 `USDT_SWEEP_MIN_MICRO`（默认 1 USDT）以下不归集；`USDT_SWEEP_MAX_ATTEMPTS`/`USDT_SWEEP_BACKOFF_SEC` 控制重试。
 - 归集为幂等、断点续跑：崩溃/重启后各任务从其持久化状态继续；`FAILED` 任务需人工介入（查 `sweep_jobs.last_error`）。

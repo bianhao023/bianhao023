@@ -60,19 +60,25 @@ async function buildOverrides(config: AppConfig): Promise<{
   // secrets so the container can derive deposit addresses and sweep funds.
   if (config.usdt?.addressMode === 'per-order') {
     const mnemonic = process.env.USDT_HD_MNEMONIC;
-    const feePrivateKey = process.env.USDT_FEE_PRIVATE_KEY;
-    if (!mnemonic || !feePrivateKey) {
-      throw new Error('USDT per-order mode requires USDT_HD_MNEMONIC and USDT_FEE_PRIVATE_KEY');
+    // Fee wallet pool: a comma-separated list (USDT_FEE_PRIVATE_KEYS) or the
+    // single USDT_FEE_PRIVATE_KEY. Gas is funded round-robin across the pool.
+    const feePrivateKeys = (process.env.USDT_FEE_PRIVATE_KEYS ?? process.env.USDT_FEE_PRIVATE_KEY ?? '')
+      .split(',')
+      .map((k) => k.trim())
+      .filter((k) => k !== '');
+    if (!mnemonic || feePrivateKeys.length === 0) {
+      throw new Error('USDT per-order mode requires USDT_HD_MNEMONIC and USDT_FEE_PRIVATE_KEY(S)');
     }
     const treasury = new TronWebTreasury({
       fullHost: config.usdt.apiBase,
       apiKey: config.usdt.apiKey,
       mnemonic,
       hdPath: process.env.USDT_HD_PATH,
-      feePrivateKey,
+      feePrivateKeys,
       contractAddress: config.usdt.contractAddress,
       minConfirmations: config.usdt.minConfirmations,
     });
+    logger.info('usdt: fee wallet pool size', { feeWallets: feePrivateKeys.length });
     overrides.tronWallet = treasury;
     overrides.tronTreasury = treasury;
     logger.info('usdt: per-order deposit addresses + sweep enabled');

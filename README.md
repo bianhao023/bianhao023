@@ -5,7 +5,7 @@ A commercial-grade payment backend for a VPN service, supporting **WeChat Pay**,
 dependencies** (only Node.js ≥ 20 built-ins: `crypto`, `http`, `fetch`), which
 keeps it auditable, easy to deploy, and free of payment-SDK supply-chain risk.
 
-> Status: builds clean (`tsc`, strict mode) and passes **327 automated tests**
+> Status: builds clean (`tsc`, strict mode) and passes **331 automated tests**
 > covering signing, callbacks, the order state machine, idempotency & dedupe
 > retention, concurrency, amount validation, USDT reconciliation, refunds
 > (full/partial/manual and asynchronous PROCESSING→final settlement), subscription
@@ -83,8 +83,11 @@ All amounts are integer **minor units** to avoid floating-point errors:
   retry/backoff. The TRON cryptography (address derivation, TRC20 signing) lives
   in an optional `tronweb`-backed adapter (`npm install tronweb`), loaded lazily
   like `pg`/`redis`; the orchestration is fully unit-tested against a fake chain.
-  Requires a funded fee wallet (`USDT_FEE_PRIVATE_KEY`) and a hot-wallet mnemonic
-  (`USDT_HD_MNEMONIC`) — keep both in a secret manager. See `docs/GO-LIVE.md`.
+  Requires a funded fee wallet (`USDT_FEE_PRIVATE_KEY`, or a fixed pool via
+  `USDT_FEE_PRIVATE_KEYS` — gas is funded round-robin across the pool) and a
+  hot-wallet mnemonic (`USDT_HD_MNEMONIC`) — keep both in a secret manager.
+  Gas always comes from these fixed fee wallets; deposit addresses are never
+  pre-funded and the collection wallet only receives. See `docs/GO-LIVE.md`.
 - **Sweep observability & ops**: Prometheus gauges (`vpn_sweep_jobs{status}`,
   `vpn_sweep_pending`, `vpn_sweep_failed`, `vpn_sweep_amount_micro_total`,
   `vpn_fee_wallet_trx_sun`), automatic alerts on FAILED sweeps and a low fee

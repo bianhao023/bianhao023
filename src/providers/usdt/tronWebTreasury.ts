@@ -25,7 +25,8 @@
  *   apiKey          ← USDT_TRONGRID_API_KEY    (optional; TRON-PRO-API-KEY)
  *   mnemonic        ← USDT_HD_MNEMONIC         🔒 secret manager
  *   hdPath          ← USDT_HD_PATH             (optional; default below)
- *   feePrivateKey   ← USDT_FEE_PRIVATE_KEY     🔒 secret manager
+ *   feePrivateKeys  ← USDT_FEE_PRIVATE_KEYS    🔒 secret manager (1..N, comma-sep;
+ *                     falls back to the single USDT_FEE_PRIVATE_KEY)
  *   contractAddress ← USDT_CONTRACT_ADDRESS    (USDT TRC20 contract)
  *   minConfirmations← USDT_MIN_CONFIRMATIONS
  *
@@ -36,6 +37,7 @@
  */
 
 import type { DerivedAddress, TronTreasury, TronWallet } from './tronTreasury';
+import { RoundRobin } from './roundRobin';
 import { logger } from '../../utils/logger';
 
 /** Default base BIP44 path prefix for TRON (coin type 195). */
@@ -60,8 +62,13 @@ export interface TronWebTreasuryConfig {
    * `${hdPath}/${index}`. Defaults to {@link DEFAULT_HD_PATH}.
    */
   hdPath?: string;
-  /** 🔒 Private key of the fee wallet that funds gas (TRX). Hot-wallet secret. */
-  feePrivateKey: string;
+  /**
+   * 🔒 Private keys of the fee wallet POOL that funds gas (TRX). Provide one or
+   * more; sweeps draw a fee wallet in round-robin to spread rate limits, tx
+   * contention and hot-wallet balance/risk across a fixed, known set of
+   * addresses. Must be non-empty. Hot-wallet secrets.
+   */
+  feePrivateKeys: string[];
   /** USDT TRC20 contract address (base58). */
   contractAddress: string;
   /** Confirmations required before a sweep/fuel tx is considered final. */
@@ -181,14 +188,19 @@ interface TronWebConstructor {
 export class TronWebTreasury implements TronWallet, TronTreasury {
   /** The lazily-required TronWeb class (module boundary; see constructor). */
   private readonly TronWeb: TronWebConstructor;
-  /** Base instance whose default key is the fee wallet (funds gas). */
+  /** Read-only / default instance (the first fee wallet). */
   private readonly base: TronWebLike;
+  /** Fee-wallet pool: one signing instance per key, drawn round-robin for gas. */
+  private readonly feePool: RoundRobin<TronWebLike>;
   /** Effective base HD path prefix (`cfg.hdPath` or the TRON default). */
   private readonly hdPath: string;
-  /** Cached fee-wallet base58 address (derived lazily from feePrivateKey). */
-  private feeAddress?: string;
+  /** Cached base58 addresses of the fee wallets (derived lazily from the keys). */
+  private feeAddresses?: string[];
 
   constructor(private readonly cfg: TronWebTreasuryConfig) {
+    if (cfg.feePrivateKeys.length === 0) {
+      throw new Error('TronWebTreasury: at least one fee private key is required');
+    }
     // Lazy load: no hard dependency on `tronweb` for the shared-address flow/tests.
     let TronWebCtor: TronWebConstructor;
     try {
@@ -211,8 +223,10 @@ export class TronWebTreasury implements TronWallet, TronTreasury {
 
     this.TronWeb = TronWebCtor;
     this.hdPath = cfg.hdPath ?? DEFAULT_HD_PATH;
-    // Base instance signs gas-funding transfers with the fee wallet key.
-    this.base = new TronWebCtor(this.instanceOptions(cfg.feePrivateKey));
+    // One signing instance per fee wallet; gas funding rotates over the pool.
+    const feeInstances = cfg.feePrivateKeys.map((key) => new TronWebCtor(this.instanceOptions(key)));
+    this.feePool = new RoundRobin<TronWebLike>(feeInstances);
+    this.base = feeInstances[0];
   }
 
   // ── TronWallet ────────────────────────────────────────────────────────────
@@ -243,20 +257,30 @@ export class TronWebTreasury implements TronWallet, TronTreasury {
     return Number(sun);
   }
 
-  /** TRX balance of the fee (gas) wallet in sun, for balance monitoring/alerts. */
+  /**
+   * Total TRX across the whole fee-wallet pool in sun, for balance monitoring/
+   * alerts. (With N wallets drained round-robin, set the low-balance threshold
+   * to ≈N× the desired per-wallet runway.)
+   */
   async feeBalanceSun(): Promise<number> {
-    this.feeAddress ??= this.base.address.fromPrivateKey(this.cfg.feePrivateKey);
-    return this.trxBalanceSun(this.feeAddress);
+    this.feeAddresses ??= this.cfg.feePrivateKeys.map((key) => this.base.address.fromPrivateKey(key));
+    const balances = await Promise.all(this.feeAddresses.map((addr) => this.trxBalanceSun(addr)));
+    return balances.reduce((sum, b) => sum + b, 0);
   }
 
-  /** Fund `toAddress` with `amountSun` TRX from the fee wallet. Returns the txid. */
+  /**
+   * Fund `toAddress` with `amountSun` TRX from the NEXT fee wallet in the pool
+   * (round-robin), so gas funding is spread across the fixed set of fee
+   * addresses rather than hammering one. Returns the txid.
+   */
   async fuelGas(toAddress: string, amountSun: number): Promise<string> {
-    const res = await this.base.trx.sendTransaction(toAddress, amountSun);
+    const feeWallet = this.feePool.next();
+    const res = await feeWallet.trx.sendTransaction(toAddress, amountSun);
     const txId = res.txid ?? res.transaction?.txID;
     if (!txId) {
       throw new Error('fuelGas: tronweb sendTransaction returned no transaction id');
     }
-    logger.info('fuelled deposit address with gas', { toAddress, amountSun, txId });
+    logger.info('fuelled deposit address with gas', { toAddress, amountSun, txId, feeWallets: this.feePool.size });
     return txId;
   }
 
