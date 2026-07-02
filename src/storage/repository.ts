@@ -1,6 +1,7 @@
 import { Order, OrderStatus, Subscription } from '../domain/types';
 import { Refund, RefundStatus } from '../domain/refund';
 import { User } from '../domain/user';
+import { DepositAddress, SweepJob } from '../domain/deposit';
 
 /** Filter for paginated order queries (all fields optional / AND-combined). */
 export interface OrderQueryFilter {
@@ -95,4 +96,33 @@ export interface ProcessedEventStore {
  */
 export interface Locker {
   withLock<T>(key: string, fn: () => Promise<T>): Promise<T>;
+}
+
+/**
+ * Stores per-order TRON deposit addresses (used in `per-order` USDT mode).
+ * `nextIndex` MUST be atomic across concurrent allocations so two orders never
+ * derive the same HD index / address.
+ */
+export interface DepositAddressRepository {
+  /** Atomically reserve and return the next monotonic HD derivation index. */
+  nextIndex(): Promise<number>;
+  /** Persist a derived deposit address record. */
+  save(record: DepositAddress): Promise<DepositAddress>;
+  findByOrderId(orderId: string): Promise<DepositAddress | undefined>;
+  findByAddress(address: string): Promise<DepositAddress | undefined>;
+}
+
+/** Stores sweep ("二次归集") jobs and exposes the watcher's work queue. */
+export interface SweepJobRepository {
+  create(job: SweepJob): Promise<SweepJob>;
+  findById(id: string): Promise<SweepJob | undefined>;
+  findByOrderId(orderId: string): Promise<SweepJob | undefined>;
+  update(job: SweepJob): Promise<SweepJob>;
+  /**
+   * Non-terminal jobs due for processing (`nextAttemptAt <= now`), oldest
+   * first. The sweep watcher drains this queue each tick.
+   */
+  due(now: number, limit: number): Promise<SweepJob[]>;
+  /** All jobs (admin/reporting helper; avoid on large datasets). */
+  all(): Promise<SweepJob[]>;
 }

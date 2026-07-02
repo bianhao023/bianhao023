@@ -231,6 +231,8 @@ test('USDT order without a refund channel records a MANUAL refund', async () => 
   const subs = new MemorySubscriptionRepository();
   const clock = { value: Date.UTC(2026, 0, 1) };
   const usdtCfg: UsdtConfig = {
+    addressMode: 'shared', hdStartIndex: 0,
+    sweep: { minSweepMicro: 1_000_000, gasTopupSun: 15_000_000, gasMinSun: 10_000_000, maxAttempts: 10, backoffMs: 60_000 },
     receivingAddress: 'TADDR', contractAddress: CANONICAL_USDT_TRC20,
     apiBase: 'https://api.trongrid.io', minConfirmations: 19, uniqueAmountMaxDelta: 9999,
   };

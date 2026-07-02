@@ -31,10 +31,37 @@ export interface AlipayConfig {
   signType: 'RSA2';
 }
 
+/** Sweep ("二次归集") policy for per-order USDT mode. */
+export interface UsdtSweepPolicy {
+  /** Skip sweeping balances below this dust threshold (micro-USDT). */
+  minSweepMicro: number;
+  /** TRX (sun) to top up a deposit address that lacks gas for its own transfer. */
+  gasTopupSun: number;
+  /** Skip gas fueling when the deposit address already holds >= this TRX (sun). */
+  gasMinSun: number;
+  /** Max processing attempts before a job is marked FAILED. */
+  maxAttempts: number;
+  /** Base backoff / confirmation-poll interval (ms). */
+  backoffMs: number;
+}
+
 /** USDT (TRC20) configuration. */
 export interface UsdtConfig {
-  /** Receiving TRON address (shared, with per-order unique amounts). */
+  /**
+   * Reconciliation model:
+   *  - 'shared'    : one receiving address, orders disambiguated by a unique amount.
+   *  - 'per-order' : each order gets its own derived deposit address, and funds
+   *                  are swept to `collectionAddress` after settlement.
+   */
+  addressMode: 'shared' | 'per-order';
+  /** Receiving TRON address (shared mode, with per-order unique amounts). */
   receivingAddress: string;
+  /** Central collection address funds are swept to (per-order mode). */
+  collectionAddress?: string;
+  /** HD index offset for derived deposit addresses (per-order mode). */
+  hdStartIndex: number;
+  /** Sweep policy (per-order mode). */
+  sweep: UsdtSweepPolicy;
   /** TRC20 contract address (defaults to the canonical USDT contract). */
   contractAddress: string;
   /** TronGrid (or compatible) API base. */
@@ -170,9 +197,22 @@ export function loadConfig(): AppConfig {
   }
 
   let usdt: UsdtConfig | undefined;
-  if (env('USDT_RECEIVING_ADDRESS')) {
+  const addressMode = env('USDT_ADDRESS_MODE', 'shared') === 'per-order' ? 'per-order' : 'shared';
+  // 'shared' mode needs a receiving address; 'per-order' mode needs a collection
+  // address (deposit addresses are derived, not statically configured).
+  if (env('USDT_RECEIVING_ADDRESS') || (addressMode === 'per-order' && env('USDT_COLLECTION_ADDRESS'))) {
     usdt = {
+      addressMode,
       receivingAddress: env('USDT_RECEIVING_ADDRESS'),
+      collectionAddress: env('USDT_COLLECTION_ADDRESS') || undefined,
+      hdStartIndex: Number(env('USDT_HD_START_INDEX', '0')),
+      sweep: {
+        minSweepMicro: Number(env('USDT_SWEEP_MIN_MICRO', '1000000')), // 1 USDT
+        gasTopupSun: Number(env('USDT_GAS_TOPUP_SUN', '15000000')), // 15 TRX
+        gasMinSun: Number(env('USDT_GAS_MIN_SUN', '10000000')), // 10 TRX
+        maxAttempts: Number(env('USDT_SWEEP_MAX_ATTEMPTS', '10')),
+        backoffMs: Number(env('USDT_SWEEP_BACKOFF_SEC', '60')) * 1000,
+      },
       contractAddress: env('USDT_CONTRACT_ADDRESS', CANONICAL_USDT_TRC20),
       apiBase: env('USDT_API_BASE', 'https://api.trongrid.io'),
       apiKey: env('USDT_API_KEY') || undefined,

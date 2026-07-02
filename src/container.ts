@@ -1,5 +1,5 @@
 import { AppConfig } from './config';
-import { PaymentMethod } from './domain/types';
+import { Order, PaymentMethod } from './domain/types';
 import { HttpClient, FetchHttpClient, PaymentProvider } from './providers/provider';
 import { WechatPayProvider } from './providers/wechat/wechatPay';
 import { AlipayProvider } from './providers/alipay/alipay';
@@ -11,6 +11,8 @@ import {
   MemoryRefundRepository,
   MemorySubscriptionRepository,
   MemoryUserRepository,
+  MemoryDepositAddressRepository,
+  MemorySweepJobRepository,
 } from './storage/memoryStore';
 import {
   Locker,
@@ -19,7 +21,13 @@ import {
   RefundRepository,
   SubscriptionRepository,
   UserRepository,
+  DepositAddressRepository,
+  SweepJobRepository,
 } from './storage/repository';
+import { TronWallet, TronTreasury } from './providers/usdt/tronTreasury';
+import { AddressAllocator } from './services/addressAllocator';
+import { SweepService } from './services/sweepService';
+import { SweepWatcher } from './services/sweepWatcher';
 import { PlanCatalog } from './services/plans';
 import { SubscriptionService } from './services/subscriptionService';
 import { PaymentService } from './services/paymentService';
@@ -71,6 +79,14 @@ export interface ContainerOverrides {
   readinessRedis?: PingableRedis;
   /** Distributed rate limiter (e.g. Redis-backed) replacing the in-process one. */
   rateLimiter?: RateLimiterLike;
+  /** TRON HD wallet for deriving per-order deposit addresses (per-order USDT mode). */
+  tronWallet?: TronWallet;
+  /** TRON treasury for balances/gas/sweeps (per-order USDT mode). */
+  tronTreasury?: TronTreasury;
+  /** Deposit-address repository (per-order USDT mode). */
+  depositAddresses?: DepositAddressRepository;
+  /** Sweep-job repository (per-order USDT mode). */
+  sweepJobs?: SweepJobRepository;
 }
 
 export interface Container {
@@ -98,6 +114,9 @@ export interface Container {
   rateLimit?: RateLimitOptions;
   security: SecurityOptions;
   usdtWatcher?: UsdtWatcher;
+  /** Present in per-order USDT mode: collects deposits to the central wallet. */
+  sweepService?: SweepService;
+  sweepWatcher?: SweepWatcher;
   webhooks?: WebhookDispatcher;
   webhookWatcher?: WebhookWatcher;
   enabledMethods: PaymentMethod[];
@@ -146,6 +165,40 @@ export function buildContainer(config: AppConfig, overrides: ContainerOverrides 
     }
   }
 
+  // ── Per-order USDT deposit addresses + sweep ("二次归集") ────────────────────
+  let addressAllocator: AddressAllocator | undefined;
+  let sweepService: SweepService | undefined;
+  let sweepWatcher: SweepWatcher | undefined;
+  let onUsdtSettled: ((order: Order) => Promise<void>) | undefined;
+  if (config.usdt?.addressMode === 'per-order') {
+    if (!overrides.tronWallet || !overrides.tronTreasury) {
+      throw new Error(
+        'USDT per-order mode is enabled but no TRON wallet/treasury is configured ' +
+          '(set USDT_HD_MNEMONIC + USDT_FEE_PRIVATE_KEY so the tronweb adapter can be built)',
+      );
+    }
+    if (!config.usdt.collectionAddress) {
+      throw new Error('USDT per-order mode requires USDT_COLLECTION_ADDRESS');
+    }
+    const depositAddresses = overrides.depositAddresses ?? new MemoryDepositAddressRepository();
+    const sweepJobs = overrides.sweepJobs ?? new MemorySweepJobRepository();
+    addressAllocator = new AddressAllocator(overrides.tronWallet, depositAddresses, config.usdt.hdStartIndex, now);
+    sweepService = new SweepService({
+      jobs: sweepJobs,
+      treasury: overrides.tronTreasury,
+      policy: { collectionAddress: config.usdt.collectionAddress, ...config.usdt.sweep },
+      audit,
+      now,
+    });
+    sweepWatcher = new SweepWatcher(sweepService);
+    onUsdtSettled = async (order: Order): Promise<void> => {
+      const depositAddress = order.metadata['depositAddress'];
+      const depositIndex = Number(order.metadata['depositIndex']);
+      if (!depositAddress || Number.isNaN(depositIndex)) return;
+      await sweepService!.enqueue({ orderId: order.id, depositIndex, depositAddress });
+    };
+  }
+
   const payments = new PaymentService({
     providers,
     orders,
@@ -155,6 +208,9 @@ export function buildContainer(config: AppConfig, overrides: ContainerOverrides 
     plans,
     orderTtlMinutes: config.orderTtlMinutes,
     usdtUniqueDeltaMax: config.usdt?.uniqueAmountMaxDelta ?? 9999,
+    usdtAddressMode: config.usdt?.addressMode,
+    addressAllocator,
+    onUsdtSettled,
     audit,
     outbound,
     now,
@@ -293,6 +349,7 @@ export function buildContainer(config: AppConfig, overrides: ContainerOverrides 
   return {
     config, orders, payments, refunds, reports, expiry, expiryWatcher, users,
     reconciliation, audit, pricing, readiness, alertSink, fxProvider, processedEvents, plans,
-    metrics, routerMetrics, rateLimit, security, usdtWatcher, webhooks, webhookWatcher, enabledMethods,
+    metrics, routerMetrics, rateLimit, security, usdtWatcher, sweepService, sweepWatcher,
+    webhooks, webhookWatcher, enabledMethods,
   };
 }

@@ -89,3 +89,32 @@ CREATE TABLE IF NOT EXISTS users (
   created_at    BIGINT NOT NULL,
   updated_at    BIGINT NOT NULL
 );
+
+-- Per-order USDT deposit addresses + sweep ("二次归集") jobs.
+CREATE SEQUENCE IF NOT EXISTS deposit_address_index_seq;
+
+CREATE TABLE IF NOT EXISTS deposit_addresses (
+  index      BIGINT PRIMARY KEY,
+  address    TEXT NOT NULL UNIQUE,
+  order_id   TEXT NOT NULL UNIQUE,
+  created_at BIGINT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS sweep_jobs (
+  id                 TEXT PRIMARY KEY,
+  order_id           TEXT NOT NULL UNIQUE,
+  deposit_index      BIGINT NOT NULL,
+  deposit_address    TEXT NOT NULL,
+  collection_address TEXT NOT NULL,
+  amount_micro       BIGINT NOT NULL DEFAULT 0,
+  status             TEXT NOT NULL,
+  gas_tx_id          TEXT,
+  sweep_tx_id        TEXT,
+  attempts           INTEGER NOT NULL DEFAULT 0,
+  last_error         TEXT,
+  created_at         BIGINT NOT NULL,
+  updated_at         BIGINT NOT NULL,
+  next_attempt_at    BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sweep_jobs_due ON sweep_jobs (next_attempt_at)
+  WHERE status IN ('PENDING','GAS_FUELING','SWEEPING');

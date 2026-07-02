@@ -1,6 +1,7 @@
 import { Order, Subscription } from '../domain/types';
 import { Refund } from '../domain/refund';
 import { User } from '../domain/user';
+import { DepositAddress, SweepJob, isSweepTerminal } from '../domain/deposit';
 import {
   OrderRepository,
   OrderQueryFilter,
@@ -11,6 +12,8 @@ import {
   UserRepository,
   ProcessedEventStore,
   Locker,
+  DepositAddressRepository,
+  SweepJobRepository,
 } from './repository';
 import { OrderStatus } from '../domain/types';
 
@@ -273,5 +276,79 @@ export class InProcessLocker implements Locker {
       // Best-effort cleanup so the map does not grow unbounded.
       if (this.tails.get(key) === mine) this.tails.delete(key);
     }
+  }
+}
+
+export class MemoryDepositAddressRepository implements DepositAddressRepository {
+  private counter = 0;
+  private byOrderId = new Map<string, DepositAddress>();
+  private byAddress = new Map<string, DepositAddress>();
+
+  async nextIndex(): Promise<number> {
+    return ++this.counter;
+  }
+
+  async save(record: DepositAddress): Promise<DepositAddress> {
+    if (this.byOrderId.has(record.orderId)) {
+      throw new Error(`duplicate deposit orderId: ${record.orderId}`);
+    }
+    if (this.byAddress.has(record.address)) {
+      throw new Error(`duplicate deposit address: ${record.address}`);
+    }
+    this.byOrderId.set(record.orderId, clone(record));
+    this.byAddress.set(record.address, clone(record));
+    return clone(record);
+  }
+
+  async findByOrderId(orderId: string): Promise<DepositAddress | undefined> {
+    const r = this.byOrderId.get(orderId);
+    return r ? clone(r) : undefined;
+  }
+
+  async findByAddress(address: string): Promise<DepositAddress | undefined> {
+    const r = this.byAddress.get(address);
+    return r ? clone(r) : undefined;
+  }
+}
+
+export class MemorySweepJobRepository implements SweepJobRepository {
+  private byId = new Map<string, SweepJob>();
+  private byOrderId = new Map<string, string>();
+
+  async create(job: SweepJob): Promise<SweepJob> {
+    if (this.byOrderId.has(job.orderId)) {
+      throw new Error(`duplicate sweep orderId: ${job.orderId}`);
+    }
+    this.byId.set(job.id, clone(job));
+    this.byOrderId.set(job.orderId, job.id);
+    return clone(job);
+  }
+
+  async findById(id: string): Promise<SweepJob | undefined> {
+    const j = this.byId.get(id);
+    return j ? clone(j) : undefined;
+  }
+
+  async findByOrderId(orderId: string): Promise<SweepJob | undefined> {
+    const id = this.byOrderId.get(orderId);
+    return id ? this.findById(id) : undefined;
+  }
+
+  async update(job: SweepJob): Promise<SweepJob> {
+    if (!this.byId.has(job.id)) throw new Error(`unknown sweep job: ${job.id}`);
+    this.byId.set(job.id, clone(job));
+    return clone(job);
+  }
+
+  async due(now: number, limit: number): Promise<SweepJob[]> {
+    return [...this.byId.values()]
+      .filter((j) => !isSweepTerminal(j.status) && j.nextAttemptAt <= now)
+      .sort((a, b) => a.createdAt - b.createdAt)
+      .slice(0, limit)
+      .map(clone);
+  }
+
+  async all(): Promise<SweepJob[]> {
+    return [...this.byId.values()].map(clone);
   }
 }

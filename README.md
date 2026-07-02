@@ -5,7 +5,7 @@ A commercial-grade payment backend for a VPN service, supporting **WeChat Pay**,
 dependencies** (only Node.js ≥ 20 built-ins: `crypto`, `http`, `fetch`), which
 keeps it auditable, easy to deploy, and free of payment-SDK supply-chain risk.
 
-> Status: builds clean (`tsc`, strict mode) and passes **289 automated tests**
+> Status: builds clean (`tsc`, strict mode) and passes **310 automated tests**
 > covering signing, callbacks, the order state machine, idempotency & dedupe
 > retention, concurrency, amount validation, USDT reconciliation, refunds
 > (full/partial/manual and asynchronous PROCESSING→final settlement), subscription
@@ -73,6 +73,18 @@ All amounts are integer **minor units** to avoid floating-point errors:
   and the admin token can be rotated with zero downtime via `ADMIN_TOKEN_PREVIOUS`.
 - **USDT matching**: deposits to a shared address are matched to orders by a
   unique exact amount, with confirmation and time-window checks.
+- **USDT per-order addresses + auto-sweep (二次归集)**: set
+  `USDT_ADDRESS_MODE=per-order` and each order gets its own HD-derived TRON
+  deposit address (matched by address, not amount). After settlement a persisted
+  sweep state machine collects the funds into a central wallet —
+  `PENDING → GAS_FUELING → SWEEPING → SWEPT` — first fueling the deposit address
+  with TRX (a fresh address holds USDT but no gas to pay for its own transfer),
+  then transferring the USDT out, with confirmation polling, idempotency and
+  retry/backoff. The TRON cryptography (address derivation, TRC20 signing) lives
+  in an optional `tronweb`-backed adapter (`npm install tronweb`), loaded lazily
+  like `pg`/`redis`; the orchestration is fully unit-tested against a fake chain.
+  Requires a funded fee wallet (`USDT_FEE_PRIVATE_KEY`) and a hot-wallet mnemonic
+  (`USDT_HD_MNEMONIC`) — keep both in a secret manager. See `docs/GO-LIVE.md`.
 - **Deep readiness**: `/readyz` aggregates isolated health checks (each with its
   own timeout). When a SQL/Redis client is injected, real `SELECT 1` / `PING`
   probes are added — SQL is critical (its outage returns 503), Redis is not

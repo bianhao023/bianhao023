@@ -69,6 +69,29 @@ export function matchTransfer(
   );
 }
 
+/**
+ * Match an order in per-order mode: the deposit address is unique to the order,
+ * so any confirmed transfer to it that covers the amount settles it (over-
+ * payment is accepted downstream; under-payment is rejected). Address
+ * uniqueness — not the amount — is what disambiguates the order.
+ */
+export function matchByAddress(
+  order: Order,
+  transfers: Trc20Transfer[],
+  depositAddress: string,
+  claimedTxIds: Set<string>,
+): Trc20Transfer | undefined {
+  const earliest = order.createdAt - 5 * 60_000;
+  return transfers.find(
+    (t) =>
+      t.confirmed &&
+      t.to === depositAddress &&
+      t.valueMicro >= order.amount &&
+      t.timestampMs >= earliest &&
+      !claimedTxIds.has(t.txId),
+  );
+}
+
 /** USDT (TRC20) provider using shared-address + unique-amount reconciliation. */
 export class UsdtTronProvider implements PaymentProvider {
   readonly method = 'usdt' as const;
@@ -79,17 +102,28 @@ export class UsdtTronProvider implements PaymentProvider {
   ) {}
 
   async createPayment(order: Order): Promise<CreatePaymentResult> {
+    const perOrder = this.cfg.addressMode === 'per-order';
+    // In per-order mode each order has its own address (set on the order
+    // metadata by the allocator before this call); in shared mode all orders
+    // use the one receiving address and are told an exact, unique amount.
+    const payTarget = perOrder
+      ? (order.metadata['depositAddress'] ?? '')
+      : this.cfg.receivingAddress;
+    if (perOrder && !payTarget) {
+      throw new ProviderError('per-order USDT mode: order has no deposit address allocated');
+    }
     return {
       method: this.method,
-      payTarget: this.cfg.receivingAddress,
+      payTarget,
       renderAs: 'address',
       extra: {
         network: 'TRON (TRC20)',
         contract: this.cfg.contractAddress,
-        // The EXACT amount the user must send for automatic matching.
         amount: fromMinorUnits(order.amount, 'USDT'),
         currency: 'USDT',
-        note: 'Send the exact amount shown so we can confirm your payment automatically.',
+        note: perOrder
+          ? 'Send USDT (TRC20) to this address; it is dedicated to your order.'
+          : 'Send the exact amount shown so we can confirm your payment automatically.',
       },
     };
   }
@@ -100,12 +134,18 @@ export class UsdtTronProvider implements PaymentProvider {
   }
 
   async queryPayment(order: Order): Promise<QueryResult> {
+    const perOrder = this.cfg.addressMode === 'per-order';
+    const watchAddress = perOrder ? (order.metadata['depositAddress'] ?? '') : this.cfg.receivingAddress;
+    if (perOrder && !watchAddress) return { paid: false, rawStatus: 'NO_ADDRESS' };
+
     const transfers = await this.chain.getIncomingTransfers(
-      this.cfg.receivingAddress,
+      watchAddress,
       this.cfg.contractAddress,
       order.createdAt - 5 * 60_000,
     );
-    const match = matchTransfer(order, transfers, this.cfg.receivingAddress, new Set());
+    const match = perOrder
+      ? matchByAddress(order, transfers, watchAddress, new Set())
+      : matchTransfer(order, transfers, watchAddress, new Set());
     if (!match) return { paid: false, rawStatus: 'NO_MATCH' };
     return {
       paid: true,

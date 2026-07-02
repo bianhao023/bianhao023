@@ -275,9 +275,30 @@ server {
 
 - **微信**：在商户平台登记的回调 URL 必须与环境变量 `WECHAT_NOTIFY_URL` **完全一致**，且为公网 HTTPS。应用用 APIv3 密钥解密、用平台证书验签。
 - **支付宝**：`ALIPAY_NOTIFY_URL` 必须与实际登记/请求中携带的 notify URL **完全一致**，公网 HTTPS，用支付宝公钥验签。
-- **USDT（无推送）**：采用**共享收款地址 + 唯一金额匹配**。所有订单收到同一个 `USDT_RECEIVING_ADDRESS`，应用为每单在金额上追加一个微小唯一增量（上限 `USDT_UNIQUE_DELTA_MAX`）以区分订单；应用轮询 TronGrid，达到 `USDT_MIN_CONFIRMATIONS`（默认 19）确认后判定到账。
-  - `USDT_RECEIVING_ADDRESS` **必须是你掌握私钥的钱包**。
-  - 建议配置 `USDT_API_KEY` 以避免 TronGrid 公共限流。
+- **USDT（无推送）**：两种对账模式，由 `USDT_ADDRESS_MODE` 选择：
+  - `shared`（默认）：**共享收款地址 + 唯一金额匹配**。所有订单收到同一个 `USDT_RECEIVING_ADDRESS`，应用为每单在金额上追加一个微小唯一增量（上限 `USDT_UNIQUE_DELTA_MAX`）以区分订单。
+  - `per-order`：**每单独立地址 + 二次归集**（见 §7.1）。
+  - 两种模式都靠轮询 TronGrid，达到 `USDT_MIN_CONFIRMATIONS`（默认 19）确认后判定到账。建议配置 `USDT_API_KEY` 以避免 TronGrid 公共限流。
+
+### 7.1 USDT 独立地址与二次归集 (per-order deposit + sweep)
+
+设 `USDT_ADDRESS_MODE=per-order` 后，每个 USDT 订单由 HD 钱包（`USDT_HD_MNEMONIC`）在唯一索引处派生**专属充值地址**，按**地址**（而非金额）匹配到账。订单结算后，持久化的归集状态机把资金归集到中心钱包 `USDT_COLLECTION_ADDRESS`：
+
+```
+PENDING ──▶ GAS_FUELING ──▶ SWEEPING ──▶ SWEPT
+   │  (充值地址无 TRX，先从费用钱包打 gas)   │
+   └──▶ EMPTY(低于粉尘阈值)      失败重试用尽 ──▶ FAILED
+```
+
+关键点与前置条件：
+- 需要 `npm install tronweb`（可选依赖，仅 per-order 模式加载）。TRON 加解密/签名由该适配器完成。
+- **两个热钱包密钥**（务必放入密钥管理，勿明文入库/入 env 常驻）：
+  - `USDT_HD_MNEMONIC` 🔒 —— 派生充值地址并在归集时重新派生私钥签名。
+  - `USDT_FEE_PRIVATE_KEY` 🔒 —— **费用钱包**，需常备充足 TRX 为每个新充值地址补 gas（`USDT_GAS_TOPUP_SUN`，默认 15 TRX/单）。**费用钱包 TRX 耗尽会导致归集停滞**——纳入余额告警。
+- `USDT_COLLECTION_ADDRESS` 建议为**冷钱包/多签**，仅收不发。
+- 粉尘阈值 `USDT_SWEEP_MIN_MICRO`（默认 1 USDT）以下不归集；`USDT_SWEEP_MAX_ATTEMPTS`/`USDT_SWEEP_BACKOFF_SEC` 控制重试。
+- 归集为幂等、断点续跑：崩溃/重启后各任务从其持久化状态继续；`FAILED` 任务需人工介入（查 `sweep_jobs.last_error`）。
+- 多副本安全：任务持久化于 DB，`sweep_jobs` 唯一约束保证每单一份；启用 `DATABASE_URL` 即跨实例安全。
 
 ---
 

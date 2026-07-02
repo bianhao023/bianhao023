@@ -19,6 +19,7 @@ import {
 } from '../storage/repository';
 import { assertTransition, isTerminal } from '../core/orderStateMachine';
 import { allocateUniqueAmount } from '../providers/usdt/usdtTron';
+import { AddressAllocator } from './addressAllocator';
 import { SubscriptionService } from './subscriptionService';
 import { PlanCatalog } from './plans';
 import { AuditLog } from '../audit/auditLog';
@@ -47,6 +48,12 @@ export interface PaymentServiceDeps {
   plans: PlanCatalog;
   orderTtlMinutes: number;
   usdtUniqueDeltaMax: number;
+  /** USDT reconciliation model; 'per-order' derives an address per order. */
+  usdtAddressMode?: 'shared' | 'per-order';
+  /** Allocates per-order deposit addresses (required in 'per-order' mode). */
+  addressAllocator?: AddressAllocator;
+  /** Called after a per-order USDT order settles, to enqueue its sweep. */
+  onUsdtSettled?: (order: Order) => Promise<void>;
   audit?: AuditLog;
   outbound?: OutboundEmitter;
   now?: () => number;
@@ -107,6 +114,18 @@ export class PaymentService {
       metadata: {},
     };
 
+    // Per-order USDT mode: derive a dedicated deposit address and record it on
+    // the order before the provider builds the payment intent (it reads the
+    // address from metadata) and before the sweep pipeline re-derives it.
+    if (input.method === 'usdt' && this.deps.usdtAddressMode === 'per-order') {
+      if (!this.deps.addressAllocator) {
+        throw new ProviderError('per-order USDT mode is enabled but no address allocator is configured');
+      }
+      const allocated = await this.deps.addressAllocator.allocate(order.id);
+      order.metadata['depositAddress'] = allocated.address;
+      order.metadata['depositIndex'] = String(allocated.index);
+    }
+
     await this.deps.orders.create(order);
 
     let payInfo: CreatePaymentResult;
@@ -145,6 +164,9 @@ export class PaymentService {
     priceUsdtMicro: number,
   ): Promise<number> {
     if (method !== 'usdt') return priceCnyFen;
+    // Per-order mode disambiguates by address, so the amount is the plain price
+    // (no unique-amount delta needed).
+    if (this.deps.usdtAddressMode === 'per-order') return priceUsdtMicro;
     const pending = await this.deps.orders.findPendingByMethod('usdt');
     const taken = pending.map((o) => o.amount);
     return allocateUniqueAmount(priceUsdtMicro, taken, this.deps.usdtUniqueDeltaMax);
@@ -291,6 +313,16 @@ export class PaymentService {
         currency: finalOrder.currency,
         providerTxnId: finalOrder.providerTxnId,
       });
+      // Per-order USDT: enqueue the sweep ("二次归集") of this deposit to the
+      // central collection wallet. Best-effort — a failure here must not fail
+      // the settlement (the sweep pipeline is retried by its watcher).
+      if (finalOrder.method === 'usdt' && this.deps.onUsdtSettled && finalOrder.metadata['depositAddress']) {
+        try {
+          await this.deps.onUsdtSettled(finalOrder);
+        } catch (err) {
+          logger.error('failed to enqueue usdt sweep', { orderId: finalOrder.id, error: (err as Error).message });
+        }
+      }
       return finalOrder;
     });
   }

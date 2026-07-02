@@ -15,7 +15,11 @@ import { fromMinorUnits } from '../src/core/money';
 async function main(): Promise<void> {
   const cfg = loadConfig();
   const usdt = cfg.usdt ?? {
+    addressMode: 'shared' as const,
     receivingAddress: process.env.USDT_RECEIVING_ADDRESS ?? '',
+    collectionAddress: undefined,
+    hdStartIndex: 0,
+    sweep: { minSweepMicro: 1_000_000, gasTopupSun: 15_000_000, gasMinSun: 10_000_000, maxAttempts: 10, backoffMs: 60_000 },
     contractAddress: process.env.USDT_CONTRACT_ADDRESS ?? CANONICAL_USDT_TRC20,
     apiBase: process.env.USDT_API_BASE ?? 'https://api.trongrid.io',
     apiKey: process.env.USDT_API_KEY,
