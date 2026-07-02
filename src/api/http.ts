@@ -3,6 +3,7 @@ import { AppError } from '../domain/errors';
 import { Counter, Histogram } from '../observability/metrics';
 import { RateLimiterLike } from './rateLimiter';
 import { API_VERSION } from '../version';
+import { uuid } from '../utils/ids';
 import { logger } from '../utils/logger';
 
 /** Optional request-level instrumentation for the router. */
@@ -41,6 +42,8 @@ export interface ReqContext {
   query: URLSearchParams;
   rawBody: string;
   headers: Record<string, string>;
+  /** Correlation id for this request (echoed as the X-Request-Id header). */
+  requestId: string;
 }
 
 export type Handler = (ctx: ReqContext, res: ServerResponse) => Promise<void> | void;
@@ -194,6 +197,10 @@ export class Router {
     // Security response headers + CORS, applied to every response.
     this.applySecurityHeaders(res, req.headers['origin']);
 
+    // Correlation id: honour an inbound X-Request-Id or mint one, and echo it.
+    const requestId = String(req.headers['x-request-id'] || uuid());
+    res.setHeader('X-Request-Id', requestId);
+
     // CORS preflight: answer OPTIONS before route matching.
     if (httpMethod === 'OPTIONS' && this.security && this.security.corsOrigins.length > 0) {
       res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -208,9 +215,15 @@ export class Router {
     const routeLabel = matched ? matched.route.pattern : 'unmatched';
 
     const record = () => {
-      if (!this.metrics) return;
-      this.metrics.requests.inc({ method: httpMethod, route: routeLabel, code: String(res.statusCode) });
-      this.metrics.duration.observe({ route: routeLabel }, Date.now() - started);
+      const durationMs = Date.now() - started;
+      if (this.metrics) {
+        this.metrics.requests.inc({ method: httpMethod, route: routeLabel, code: String(res.statusCode) });
+        this.metrics.duration.observe({ route: routeLabel }, durationMs);
+      }
+      // Structured access log, correlatable by requestId.
+      const fwd = req.headers['x-forwarded-for'];
+      const ip = (Array.isArray(fwd) ? fwd[0] : fwd)?.split(',')[0].trim() || req.socket.remoteAddress || 'unknown';
+      logger.info('request', { requestId, method: httpMethod, route: routeLabel, status: res.statusCode, durationMs, ip });
     };
 
     if (!matched) {
@@ -253,6 +266,7 @@ export class Router {
       query: url.searchParams,
       rawBody,
       headers,
+      requestId,
     };
     try {
       await matched.route.handler(ctx, res);

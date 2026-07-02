@@ -228,6 +228,22 @@ test('readiness probe reports ok with per-check detail', async () => {
   }
 });
 
+test('X-Request-Id is generated and an inbound one is echoed', async () => {
+  const { base, server } = await startServer();
+  try {
+    const generated = (await fetch(`${base}/healthz`)).headers.get('x-request-id');
+    assert.ok(generated && generated.length >= 8, 'a request id should be generated');
+
+    const echoed = await fetch(`${base}/healthz`, { headers: { 'X-Request-Id': 'trace-abc-123' } });
+    assert.equal(echoed.headers.get('x-request-id'), 'trace-abc-123');
+
+    // Also present on error/404 responses.
+    assert.ok((await fetch(`${base}/nope`)).headers.get('x-request-id'));
+  } finally {
+    server.close();
+  }
+});
+
 test('version endpoint and X-API-Version header', async () => {
   const { base, server } = await startServer();
   try {

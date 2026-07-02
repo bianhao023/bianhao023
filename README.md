@@ -5,7 +5,7 @@ A commercial-grade payment backend for a VPN service, supporting **WeChat Pay**,
 dependencies** (only Node.js ≥ 20 built-ins: `crypto`, `http`, `fetch`), which
 keeps it auditable, easy to deploy, and free of payment-SDK supply-chain risk.
 
-> Status: builds clean (`tsc`, strict mode) and passes **254 automated tests**
+> Status: builds clean (`tsc`, strict mode) and passes **255 automated tests**
 > covering signing, callbacks, the order state machine, idempotency & dedupe
 > retention, concurrency, amount validation, USDT reconciliation, refunds
 > (full/partial/manual and asynchronous PROCESSING→final settlement), subscription
@@ -347,6 +347,14 @@ A background `ExpiryWatcher` (or the cron-friendly `POST /admin/expiry/run`):
 Delivery goes through the `Notifier` interface (`src/notifications/notifier.ts`).
 The default `LoggerNotifier` just logs; swap in an email/SMS/push/webhook
 implementation in production — no other code changes required.
+
+## Request correlation & access logs
+
+Every response carries an `X-Request-Id` header — an inbound one is honoured,
+otherwise a UUID is minted. Each request emits a structured access log line
+(`msg:"request"`) with `requestId`, method, route pattern, status, duration and
+client ip, so logs can be correlated end-to-end (`ctx.requestId` is available to
+handlers). 
 
 ## Monitoring & metrics
 
