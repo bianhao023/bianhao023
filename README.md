@@ -5,7 +5,7 @@ A commercial-grade payment backend for a VPN service, supporting **WeChat Pay**,
 dependencies** (only Node.js ≥ 20 built-ins: `crypto`, `http`, `fetch`), which
 keeps it auditable, easy to deploy, and free of payment-SDK supply-chain risk.
 
-> Status: builds clean (`tsc`, strict mode) and passes **233 automated tests**
+> Status: builds clean (`tsc`, strict mode) and passes **235 automated tests**
 > covering signing, callbacks, the order state machine, idempotency & dedupe
 > retention, concurrency, amount validation, USDT reconciliation, refunds
 > (full/partial/manual and asynchronous PROCESSING→final settlement), subscription
@@ -272,7 +272,9 @@ The full API is described by an OpenAPI 3.0.3 spec at `GET /openapi.json`, with
 interactive Swagger UI at `GET /docs`. The spec (`src/api/openapi.ts`) covers
 every endpoint with schemas, tags, and the `bearerAuth` security scheme, and
 mirrors every `/api/*` path under its `/api/v1/*` alias. A structural validation
-test keeps the spec well-formed (all `$ref`s resolve).
+test keeps the spec well-formed (all `$ref`s resolve). A **contract test**
+(`test/contract.test.ts`) additionally asserts the spec documents exactly the
+routes the router registers — no undocumented endpoints, no phantom docs.
 
 ## Audit log & consistency checks
 

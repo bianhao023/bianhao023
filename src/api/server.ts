@@ -1,10 +1,11 @@
 import { createServer, Server } from 'node:http';
 import { Container } from '../container';
-import { buildRouter } from './routes';
+import { ApiDeps, buildRouter } from './routes';
+import { Router } from './http';
 
-/** Build (but do not start) the HTTP server for a wired container. */
-export function createHttpServer(container: Container): Server {
-  const router = buildRouter({
+/** Assemble the API dependencies from a wired container. */
+export function apiDepsFromContainer(container: Container): ApiDeps {
+  return {
     payments: container.payments,
     refunds: container.refunds,
     reports: container.reports,
@@ -25,6 +26,16 @@ export function createHttpServer(container: Container): Server {
     security: container.security,
     usdtWatcher: container.usdtWatcher,
     webhooks: container.webhooks,
-  });
+  };
+}
+
+/** Build the router for a wired container (shared by the server and tests). */
+export function buildContainerRouter(container: Container): Router {
+  return buildRouter(apiDepsFromContainer(container));
+}
+
+/** Build (but do not start) the HTTP server for a wired container. */
+export function createHttpServer(container: Container): Server {
+  const router = buildContainerRouter(container);
   return createServer((req, res) => router.handle(req, res));
 }

@@ -99,6 +99,11 @@ export class Router {
     return this;
   }
 
+  /** Read-only list of registered routes (method + pattern), for contract tests. */
+  listRoutes(): Array<{ method: string; pattern: string }> {
+    return this.routes.map((r) => ({ method: r.method, pattern: r.pattern }));
+  }
+
   get(pattern: string, handler: Handler): this {
     return this.add('GET', pattern, handler);
   }

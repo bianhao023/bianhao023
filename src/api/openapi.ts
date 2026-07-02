@@ -94,6 +94,28 @@ export function buildOpenApiSpec(enabledMethods: string[]): Record<string, unkno
           },
         },
       },
+      '/version': {
+        get: {
+          tags: ['Health'],
+          summary: 'Application and API version information',
+          operationId: 'getVersion',
+          responses: {
+            '200': jsonResponse('Version metadata for this deployment.', {
+              type: 'object',
+              properties: {
+                app: { type: 'string', description: 'Application version.' },
+                api: { type: 'string', description: 'Current API version.' },
+                supported: {
+                  type: 'array',
+                  items: { type: 'string' },
+                  description: 'API versions this deployment accepts.',
+                },
+              },
+              required: ['app', 'api', 'supported'],
+            }),
+          },
+        },
+      },
       '/metrics': {
         get: {
           tags: ['Health'],
@@ -148,6 +170,41 @@ export function buildOpenApiSpec(enabledMethods: string[]): Record<string, unkno
               },
               required: ['plans', 'enabledMethods'],
             }),
+          },
+        },
+      },
+
+      '/api/pricing/quote': {
+        get: {
+          tags: ['Plans'],
+          summary: 'Convert an amount between currencies at the current rate',
+          operationId: 'pricingQuote',
+          parameters: [
+            {
+              name: 'amount',
+              in: 'query',
+              required: true,
+              description: 'Amount to convert, as a non-negative integer in minor units.',
+              schema: { type: 'integer', minimum: 0 },
+            },
+            {
+              name: 'from',
+              in: 'query',
+              required: true,
+              description: 'Source currency.',
+              schema: { type: 'string' },
+            },
+            {
+              name: 'to',
+              in: 'query',
+              required: true,
+              description: 'Target currency.',
+              schema: { type: 'string' },
+            },
+          ],
+          responses: {
+            '200': jsonResponse('The converted quote.', { type: 'object', additionalProperties: true }),
+            '400': errorResponse('Invalid amount or unsupported currency pair.'),
           },
         },
       },
@@ -312,6 +369,38 @@ export function buildOpenApiSpec(enabledMethods: string[]): Record<string, unkno
           },
         },
       },
+      '/internal/maintenance/sweep': {
+        post: {
+          tags: ['Admin'],
+          summary: 'Sweep expired processed-event dedupe records',
+          operationId: 'maintenanceSweep',
+          responses: {
+            '200': jsonResponse('Number of dedupe records removed.', {
+              type: 'object',
+              properties: { removed: { type: 'integer' } },
+              required: ['removed'],
+            }),
+          },
+        },
+      },
+      '/internal/webhooks/process': {
+        post: {
+          tags: ['Admin'],
+          summary: 'Drain due outbound webhook deliveries',
+          operationId: 'processWebhooks',
+          responses: {
+            '200': jsonResponse('Counts of deliveries processed.', {
+              type: 'object',
+              properties: {
+                delivered: { type: 'integer' },
+                retried: { type: 'integer' },
+                dead: { type: 'integer' },
+              },
+              required: ['delivered', 'retried', 'dead'],
+            }),
+          },
+        },
+      },
 
       // ── Admin ─────────────────────────────────────────────────────────────
       '/admin/reports/summary': {
@@ -323,6 +412,20 @@ export function buildOpenApiSpec(enabledMethods: string[]): Record<string, unkno
           parameters: reportFilterParams(),
           responses: {
             '200': jsonResponse('The report summary.', { type: 'object', additionalProperties: true }),
+            '401': errorResponse('Missing or invalid admin token.'),
+            '403': errorResponse('Admin endpoints disabled.'),
+          },
+        },
+      },
+      '/admin/reports/orders-summary': {
+        get: {
+          tags: ['Admin'],
+          summary: 'Order-side aggregation (SQL GROUP BY pushdown)',
+          operationId: 'adminOrdersSummary',
+          security: [{ bearerAuth: [] }],
+          parameters: reportFilterParams(),
+          responses: {
+            '200': jsonResponse('The order summary.', { type: 'object', additionalProperties: true }),
             '401': errorResponse('Missing or invalid admin token.'),
             '403': errorResponse('Admin endpoints disabled.'),
           },
@@ -351,6 +454,135 @@ export function buildOpenApiSpec(enabledMethods: string[]): Record<string, unkno
           parameters: paginationParams(),
           responses: {
             '200': jsonResponse('Paginated refunds.', paginatedSchema(ref('Refund'))),
+            '401': errorResponse('Missing or invalid admin token.'),
+            '403': errorResponse('Admin endpoints disabled.'),
+          },
+        },
+      },
+      '/admin/orders.csv': {
+        get: {
+          tags: ['Admin'],
+          summary: 'Export orders as CSV',
+          operationId: 'adminOrdersCsv',
+          security: [{ bearerAuth: [] }],
+          parameters: reportFilterParams(),
+          responses: {
+            '200': {
+              description: 'Orders in CSV format (attachment).',
+              content: { 'text/csv': { schema: { type: 'string' } } },
+            },
+            '401': errorResponse('Missing or invalid admin token.'),
+            '403': errorResponse('Admin endpoints disabled.'),
+          },
+        },
+      },
+      '/admin/refunds.csv': {
+        get: {
+          tags: ['Admin'],
+          summary: 'Export refunds as CSV',
+          operationId: 'adminRefundsCsv',
+          security: [{ bearerAuth: [] }],
+          responses: {
+            '200': {
+              description: 'Refunds in CSV format (attachment).',
+              content: { 'text/csv': { schema: { type: 'string' } } },
+            },
+            '401': errorResponse('Missing or invalid admin token.'),
+            '403': errorResponse('Admin endpoints disabled.'),
+          },
+        },
+      },
+      '/admin/audit': {
+        get: {
+          tags: ['Admin'],
+          summary: 'Query the audit log',
+          operationId: 'adminQueryAudit',
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            { name: 'action', in: 'query', required: false, description: 'Filter by action.', schema: { type: 'string' } },
+            { name: 'actor', in: 'query', required: false, description: 'Filter by actor.', schema: { type: 'string' } },
+            { name: 'subjectId', in: 'query', required: false, description: 'Filter by subject id.', schema: { type: 'string' } },
+            { name: 'from', in: 'query', required: false, description: 'Start epoch millis (inclusive).', schema: { type: 'integer' } },
+            { name: 'to', in: 'query', required: false, description: 'End epoch millis (inclusive).', schema: { type: 'integer' } },
+            ...paginationParams(),
+          ],
+          responses: {
+            '200': jsonResponse('Matching audit-log entries.', { type: 'object', additionalProperties: true }),
+            '401': errorResponse('Missing or invalid admin token.'),
+            '403': errorResponse('Admin endpoints disabled.'),
+          },
+        },
+      },
+      '/admin/webhooks': {
+        get: {
+          tags: ['Admin'],
+          summary: 'List outbound webhook deliveries',
+          operationId: 'adminListWebhooks',
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            {
+              name: 'status',
+              in: 'query',
+              required: false,
+              description: 'Filter by delivery status.',
+              schema: { type: 'string', enum: ['pending', 'delivered', 'dead'] },
+            },
+            ...paginationParams(),
+          ],
+          responses: {
+            '200': jsonResponse('Paginated webhook deliveries.', {
+              type: 'object',
+              properties: {
+                total: { type: 'integer' },
+                limit: { type: 'integer' },
+                offset: { type: 'integer' },
+                items: { type: 'array', items: { type: 'object', additionalProperties: true } },
+              },
+              required: ['total', 'limit', 'offset', 'items'],
+            }),
+            '400': errorResponse('Invalid status filter.'),
+            '401': errorResponse('Missing or invalid admin token.'),
+            '403': errorResponse('Admin endpoints disabled.'),
+          },
+        },
+      },
+      '/admin/webhooks/{id}/retry': {
+        post: {
+          tags: ['Admin'],
+          summary: 'Requeue a webhook delivery for immediate retry',
+          operationId: 'adminRetryWebhook',
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            { name: 'id', in: 'path', required: true, description: 'Webhook delivery id.', schema: { type: 'string' } },
+          ],
+          responses: {
+            '200': jsonResponse('The requeued delivery.', { type: 'object', additionalProperties: true }),
+            '401': errorResponse('Missing or invalid admin token.'),
+            '403': errorResponse('Admin endpoints disabled.'),
+            '404': errorResponse('Delivery not found or webhooks not configured.'),
+          },
+        },
+      },
+      '/admin/reconciliation': {
+        post: {
+          tags: ['Admin'],
+          summary: 'Run a financial-consistency reconciliation pass',
+          operationId: 'adminReconciliation',
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            {
+              name: 'heal',
+              in: 'query',
+              required: false,
+              description: 'When "true", attempt to heal detected discrepancies.',
+              schema: { type: 'string', enum: ['true', 'false'] },
+            },
+          ],
+          responses: {
+            '200': jsonResponse('The reconciliation report and any raised alert.', {
+              type: 'object',
+              additionalProperties: true,
+            }),
             '401': errorResponse('Missing or invalid admin token.'),
             '403': errorResponse('Admin endpoints disabled.'),
           },
