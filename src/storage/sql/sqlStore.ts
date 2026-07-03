@@ -33,6 +33,7 @@ const optStr = (v: unknown): string | undefined => (v === null || v === undefine
 export function rowToOrder(r: Record<string, unknown>): Order {
   return {
     id: str(r.id),
+    merchantId: optStr(r.merchant_id) ?? 'default',
     outTradeNo: str(r.out_trade_no),
     userId: str(r.user_id),
     planId: str(r.plan_id),
@@ -92,10 +93,10 @@ export class SqlOrderRepository implements OrderRepository {
   async create(o: Order): Promise<Order> {
     await this.db.query(
       `INSERT INTO orders
-        (id, out_trade_no, user_id, plan_id, method, currency, amount, status,
+        (id, merchant_id, out_trade_no, user_id, plan_id, method, currency, amount, status,
          provider_txn_id, idempotency_key, created_at, updated_at, expires_at, paid_at, refunded_amount, metadata)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
-      [o.id, o.outTradeNo, o.userId, o.planId, o.method, o.currency, o.amount, o.status,
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
+      [o.id, o.merchantId ?? 'default', o.outTradeNo, o.userId, o.planId, o.method, o.currency, o.amount, o.status,
         o.providerTxnId ?? null, o.idempotencyKey ?? null, o.createdAt, o.updatedAt, o.expiresAt,
         o.paidAt ?? null, o.refundedAmount ?? 0, JSON.stringify(o.metadata)],
     );
@@ -142,6 +143,7 @@ export class SqlOrderRepository implements OrderRepository {
       params.push(value);
       clauses.push(sql.replace('?', `$${params.length}`));
     };
+    if (filter.merchantId) add('merchant_id = ?', filter.merchantId);
     if (filter.status) add('status = ?', filter.status);
     if (filter.method) add('method = ?', filter.method);
     if (filter.from !== undefined) add('created_at >= ?', filter.from);
@@ -166,6 +168,7 @@ export class SqlOrderRepository implements OrderRepository {
       params.push(value);
       clauses.push(sql.replace('?', `$${params.length}`));
     };
+    if (filter.merchantId) add('merchant_id = ?', filter.merchantId);
     if (filter.status) add('status = ?', filter.status);
     if (filter.method) add('method = ?', filter.method);
     if (filter.from !== undefined) add('created_at >= ?', filter.from);

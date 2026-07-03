@@ -60,6 +60,8 @@ export interface Plan {
 /** An order placed by a user for a plan. */
 export interface Order {
   id: string;
+  /** Owning merchant/tenant. Absent on legacy rows → treated as the default tenant. */
+  merchantId?: string;
   /** Merchant order number sent to the payment provider (out_trade_no). */
   outTradeNo: string;
   userId: string;

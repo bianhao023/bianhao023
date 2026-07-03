@@ -22,6 +22,8 @@ import { buildOpenApiSpec } from './openapi';
 import { SWAGGER_UI_HTML } from './docsHtml';
 import { qrToSvg } from '../qr/qrSvg';
 import { toPublicUser } from '../domain/user';
+import { Merchant, toPublicMerchant, DEFAULT_MERCHANT_ID, MerchantStatus } from '../domain/merchant';
+import { MerchantService } from '../services/merchantService';
 import { PlanCatalog } from '../services/plans';
 import { UsdtWatcher } from '../services/usdtWatcher';
 import { Metrics } from '../observability/metrics';
@@ -56,6 +58,8 @@ export interface ApiDeps {
   sweepJobs?: SweepJobRepository;
   /** Sweep service (per-order USDT mode); enables sweep retry. */
   sweepService?: SweepService;
+  /** Merchant/tenant service; enables multi-tenant scoping + /admin/merchants. */
+  merchants?: MerchantService;
 }
 
 /** Public, sanitised projection of an order returned to clients. */
@@ -98,6 +102,28 @@ class AuthError extends AppError {
 function bearerToken(ctx: ReqContext): string {
   const header = ctx.headers['authorization'] ?? '';
   return header.startsWith('Bearer ') ? header.slice('Bearer '.length) : '';
+}
+
+/**
+ * Resolve the acting tenant from the `X-Merchant-Key` header. Returns the
+ * merchant when a valid key is supplied, or undefined for an unscoped
+ * (platform/default) caller. A key that is present but invalid → 401, so a
+ * merchant cannot silently fall back to the default tenant.
+ */
+async function merchantScope(ctx: ReqContext, deps: ApiDeps): Promise<Merchant | undefined> {
+  const key = ctx.headers['x-merchant-key'];
+  if (!key) return undefined;
+  if (!deps.merchants) throw new AuthError('multi-tenant is not enabled', 403);
+  const merchant = await deps.merchants.authenticate(key);
+  if (!merchant) throw new AuthError('invalid merchant key');
+  return merchant;
+}
+
+/** Reject access to an order that does not belong to the acting tenant. */
+function assertOrderScope(order: Order, scope: Merchant | undefined): void {
+  if (scope && (order.merchantId ?? DEFAULT_MERCHANT_ID) !== scope.id) {
+    throw new NotFoundError(`order not found: ${order.id}`);
+  }
 }
 
 /**
@@ -251,19 +277,36 @@ export function buildRouter(deps: ApiDeps): Router {
       ctx.headers['idempotency-key'] ||
       (typeof body['idempotencyKey'] === 'string' ? (body['idempotencyKey'] as string) : undefined);
 
+    const scope = await merchantScope(ctx, deps);
     const { order, payInfo } = await deps.payments.createOrder({
       userId,
       planId,
       method,
       idempotencyKey,
+      merchantId: scope?.id,
     });
     sendJson(res, 201, { ...orderView(order), payInfo });
   });
 
   r.get('/api/orders/:id', async (ctx, res) => {
+    const scope = await merchantScope(ctx, deps);
     const order = await deps.payments.getOrder(ctx.params['id']);
     if (!order) throw new NotFoundError(`order not found: ${ctx.params['id']}`);
+    assertOrderScope(order, scope);
     sendJson(res, 200, orderView(order));
+  });
+
+  // A merchant lists ITS OWN orders (requires a valid X-Merchant-Key).
+  r.get('/api/merchant/orders', async (ctx, res) => {
+    const scope = await merchantScope(ctx, deps);
+    if (!scope) throw new AuthError('X-Merchant-Key required');
+    const limit = intParam(ctx.query, 'limit', 50, 500);
+    const offset = intParam(ctx.query, 'offset', 0, Number.MAX_SAFE_INTEGER);
+    const { total, items } = await deps.reports.listOrders(
+      { ...reportFilter(ctx.query), merchantId: scope.id },
+      { limit, offset },
+    );
+    sendJson(res, 200, { total, limit, offset, items: items.map(orderView) });
   });
 
   // Scannable QR image for the order's pay target (WeChat code_url / Alipay
@@ -380,6 +423,44 @@ export function buildRouter(deps: ApiDeps): Router {
     const offset = intParam(ctx.query, 'offset', 0, Number.MAX_SAFE_INTEGER);
     const { total, items } = await deps.reports.listRefunds({ limit, offset }, refundFilter(ctx.query));
     sendJson(res, 200, { total, limit, offset, items });
+  });
+
+  // Merchant/tenant management (admin).
+  r.post('/admin/merchants', async (ctx, res) => {
+    await adminGuard(ctx, deps);
+    if (!deps.merchants) { sendJson(res, 404, { error: 'NOT_ENABLED', message: 'multi-tenant is not enabled' }); return; }
+    const body = parseJsonBody(ctx);
+    const name = requireString(body, 'name');
+    const usdtHdPath = typeof body['usdtHdPath'] === 'string' ? (body['usdtHdPath'] as string) : undefined;
+    const merchant = await deps.merchants.create({ name, usdtHdPath });
+    // The API key is returned ONCE, on creation.
+    sendJson(res, 201, { ...toPublicMerchant(merchant), apiKey: merchant.apiKey });
+  });
+
+  r.get('/admin/merchants', async (ctx, res) => {
+    await adminGuard(ctx, deps);
+    if (!deps.merchants) { sendJson(res, 404, { error: 'NOT_ENABLED', message: 'multi-tenant is not enabled' }); return; }
+    const items = (await deps.merchants.list()).map(toPublicMerchant);
+    sendJson(res, 200, { total: items.length, items });
+  });
+
+  r.post('/admin/merchants/:id/rotate-key', async (ctx, res) => {
+    await adminGuard(ctx, deps);
+    if (!deps.merchants) { sendJson(res, 404, { error: 'NOT_ENABLED', message: 'multi-tenant is not enabled' }); return; }
+    const merchant = await deps.merchants.rotateKey(ctx.params['id']);
+    sendJson(res, 200, { id: merchant.id, apiKey: merchant.apiKey });
+  });
+
+  r.post('/admin/merchants/:id/status', async (ctx, res) => {
+    await adminGuard(ctx, deps);
+    if (!deps.merchants) { sendJson(res, 404, { error: 'NOT_ENABLED', message: 'multi-tenant is not enabled' }); return; }
+    const body = parseJsonBody(ctx);
+    const status = body['status'];
+    if (status !== 'active' && status !== 'suspended') {
+      throw new ValidationError('status must be "active" or "suspended"');
+    }
+    const merchant = await deps.merchants.setStatus(ctx.params['id'], status as MerchantStatus);
+    sendJson(res, 200, toPublicMerchant(merchant));
   });
 
   // USDT sweep ("二次归集") jobs: list, and manually requeue a FAILED one.

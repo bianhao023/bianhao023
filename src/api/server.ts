@@ -30,6 +30,7 @@ export function apiDepsFromContainer(container: Container): ApiDeps {
     webhooks: container.webhooks,
     sweepJobs: container.sweepJobs,
     sweepService: container.sweepService,
+    merchants: container.merchants,
   };
 }
 

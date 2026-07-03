@@ -19,6 +19,7 @@ import {
 } from '../storage/repository';
 import { assertTransition, isTerminal } from '../core/orderStateMachine';
 import { allocateUniqueAmount } from '../providers/usdt/usdtTron';
+import { DEFAULT_MERCHANT_ID } from '../domain/merchant';
 import { AddressAllocator } from './addressAllocator';
 import { SubscriptionService } from './subscriptionService';
 import { PlanCatalog } from './plans';
@@ -32,6 +33,8 @@ export interface CreateOrderInput {
   planId: string;
   method: PaymentMethod;
   idempotencyKey?: string;
+  /** Owning tenant; defaults to the platform default merchant when omitted. */
+  merchantId?: string;
 }
 
 export interface CreateOrderOutput {
@@ -100,6 +103,7 @@ export class PaymentService {
     const now = this.now();
     const order: Order = {
       id: uuid(),
+      merchantId: input.merchantId ?? DEFAULT_MERCHANT_ID,
       outTradeNo: newOutTradeNo(),
       userId: input.userId,
       planId: plan.id,

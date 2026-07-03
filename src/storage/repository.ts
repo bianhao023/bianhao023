@@ -2,9 +2,12 @@ import { Order, OrderStatus, Subscription } from '../domain/types';
 import { Refund, RefundStatus } from '../domain/refund';
 import { User } from '../domain/user';
 import { DepositAddress, SweepJob } from '../domain/deposit';
+import { Merchant } from '../domain/merchant';
 
 /** Filter for paginated order queries (all fields optional / AND-combined). */
 export interface OrderQueryFilter {
+  /** Scope to a single tenant (multi-merchant isolation). */
+  merchantId?: string;
   status?: OrderStatus;
   method?: string;
   /** Inclusive lower bound on createdAt (epoch millis). */
@@ -65,6 +68,16 @@ export interface UserRepository {
   findByEmail(email: string): Promise<User | undefined>;
   findByApiKey(apiKey: string): Promise<User | undefined>;
   update(user: User): Promise<User>;
+}
+
+/** Stores merchants/tenants. `findByApiKey` also matches the previous key. */
+export interface MerchantRepository {
+  create(merchant: Merchant): Promise<Merchant>;
+  findById(id: string): Promise<Merchant | undefined>;
+  /** Match a merchant whose current OR previous API key equals `apiKey`. */
+  findByApiKey(apiKey: string): Promise<Merchant | undefined>;
+  update(merchant: Merchant): Promise<Merchant>;
+  list(): Promise<Merchant[]>;
 }
 
 export interface SubscriptionRepository {

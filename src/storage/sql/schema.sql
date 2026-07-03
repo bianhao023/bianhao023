@@ -1,8 +1,23 @@
 -- PostgreSQL schema for the VPN payment backend.
 -- Apply with: psql "$DATABASE_URL" -f src/storage/sql/schema.sql
 
+-- Merchants / tenants (multi-tenant isolation). A `default` row is
+-- auto-provisioned by the app for single-tenant deployments.
+CREATE TABLE IF NOT EXISTS merchants (
+  id                TEXT PRIMARY KEY,
+  name              TEXT NOT NULL,
+  status            TEXT NOT NULL,
+  api_key           TEXT NOT NULL UNIQUE,
+  api_key_previous  TEXT,
+  usdt_hd_path      TEXT,
+  created_at        BIGINT NOT NULL,
+  updated_at        BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_merchants_api_key_prev ON merchants (api_key_previous);
+
 CREATE TABLE IF NOT EXISTS orders (
   id               TEXT PRIMARY KEY,
+  merchant_id      TEXT NOT NULL DEFAULT 'default',
   out_trade_no     TEXT NOT NULL UNIQUE,
   user_id          TEXT NOT NULL,
   plan_id          TEXT NOT NULL,
@@ -20,8 +35,12 @@ CREATE TABLE IF NOT EXISTS orders (
   metadata         JSONB NOT NULL DEFAULT '{}'::jsonb
 );
 
+-- Backfill for pre-existing deployments (idempotent).
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS merchant_id TEXT NOT NULL DEFAULT 'default';
+
 CREATE INDEX IF NOT EXISTS idx_orders_status_method ON orders (status, method);
 CREATE INDEX IF NOT EXISTS idx_orders_user ON orders (user_id);
+CREATE INDEX IF NOT EXISTS idx_orders_merchant ON orders (merchant_id);
 
 CREATE TABLE IF NOT EXISTS refunds (
   id                 TEXT PRIMARY KEY,

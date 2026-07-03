@@ -495,6 +495,73 @@ export function buildOpenApiSpec(enabledMethods: string[]): Record<string, unkno
           },
         },
       },
+      '/api/merchant/orders': {
+        get: {
+          tags: ['Orders'],
+          summary: "List the calling merchant's own orders",
+          description: 'Requires a valid `X-Merchant-Key` header; scoped to that tenant.',
+          operationId: 'listMerchantOrders',
+          parameters: [...reportFilterParams(), ...paginationParams()],
+          responses: {
+            '200': jsonResponse('Paginated orders for the tenant.', paginatedSchema(ref('Order'))),
+            '401': errorResponse('Missing or invalid merchant key.'),
+          },
+        },
+      },
+      '/admin/merchants': {
+        post: {
+          tags: ['Admin'],
+          summary: 'Create a merchant/tenant',
+          operationId: 'adminCreateMerchant',
+          security: [{ bearerAuth: [] }],
+          requestBody: jsonBody({ type: 'object', required: ['name'], properties: { name: { type: 'string' }, usdtHdPath: { type: 'string' } } }),
+          responses: {
+            '201': jsonResponse('The created merchant, including its API key (shown once).', { type: 'object', additionalProperties: true }),
+            '401': errorResponse('Missing or invalid admin token.'),
+            '403': errorResponse('Admin endpoints disabled.'),
+          },
+        },
+        get: {
+          tags: ['Admin'],
+          summary: 'List merchants/tenants',
+          operationId: 'adminListMerchants',
+          security: [{ bearerAuth: [] }],
+          responses: {
+            '200': jsonResponse('All merchants (public projection).', { type: 'object', additionalProperties: true }),
+            '401': errorResponse('Missing or invalid admin token.'),
+            '403': errorResponse('Admin endpoints disabled.'),
+          },
+        },
+      },
+      '/admin/merchants/{id}/rotate-key': {
+        post: {
+          tags: ['Admin'],
+          summary: "Rotate a merchant's API key",
+          operationId: 'adminRotateMerchantKey',
+          security: [{ bearerAuth: [] }],
+          parameters: [{ name: 'id', in: 'path', required: true, description: 'Merchant id.', schema: { type: 'string' } }],
+          responses: {
+            '200': jsonResponse('The new API key.', { type: 'object', additionalProperties: true }),
+            '401': errorResponse('Missing or invalid admin token.'),
+            '404': errorResponse('Merchant not found.'),
+          },
+        },
+      },
+      '/admin/merchants/{id}/status': {
+        post: {
+          tags: ['Admin'],
+          summary: 'Activate or suspend a merchant',
+          operationId: 'adminSetMerchantStatus',
+          security: [{ bearerAuth: [] }],
+          parameters: [{ name: 'id', in: 'path', required: true, description: 'Merchant id.', schema: { type: 'string' } }],
+          requestBody: jsonBody({ type: 'object', required: ['status'], properties: { status: { type: 'string', enum: ['active', 'suspended'] } } }),
+          responses: {
+            '200': jsonResponse('The updated merchant.', { type: 'object', additionalProperties: true }),
+            '401': errorResponse('Missing or invalid admin token.'),
+            '404': errorResponse('Merchant not found.'),
+          },
+        },
+      },
       '/admin/sweeps': {
         get: {
           tags: ['Admin'],

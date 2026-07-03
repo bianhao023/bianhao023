@@ -5,7 +5,7 @@ A commercial-grade payment backend for a VPN service, supporting **WeChat Pay**,
 dependencies** (only Node.js ≥ 20 built-ins: `crypto`, `http`, `fetch`), which
 keeps it auditable, easy to deploy, and free of payment-SDK supply-chain risk.
 
-> Status: builds clean (`tsc`, strict mode) and passes **340 automated tests**
+> Status: builds clean (`tsc`, strict mode) and passes **344 automated tests**
 > covering signing, callbacks, the order state machine, idempotency & dedupe
 > retention, concurrency, amount validation, USDT reconciliation, refunds
 > (full/partial/manual and asynchronous PROCESSING→final settlement), subscription
@@ -88,6 +88,14 @@ All amounts are integer **minor units** to avoid floating-point errors:
   hot-wallet mnemonic (`USDT_HD_MNEMONIC`) — keep both in a secret manager.
   Gas always comes from these fixed fee wallets; deposit addresses are never
   pre-funded and the collection wallet only receives. See `docs/GO-LIVE.md`.
+- **Multi-tenant isolation (Phase 1)**: each merchant/tenant has its own API key
+  (`X-Merchant-Key`, with rotation grace + suspend) and USDT deposit-address
+  namespace (`usdtHdPath`); every order carries a `merchantId` and the
+  merchant-facing API only sees/acts on its own orders (`GET /api/merchant/orders`,
+  cross-tenant fetch returns 404). A `default` tenant is auto-provisioned so
+  single-tenant deployments are unchanged. Admin manages tenants via
+  `POST/GET /admin/merchants`, `.../rotate-key`, `.../status`. (Per-merchant
+  *provider* credentials + callback routing are Phase 2.)
 - **Scan-to-pay QR**: WeChat Native (`code_url`) and Alipay precreate (`qr_code`)
   already return scannable QR content; every order also exposes a server-rendered
   QR image at `GET /api/orders/:id/qrcode.svg` (and `qrImagePath` in the order

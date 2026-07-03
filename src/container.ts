@@ -11,6 +11,7 @@ import {
   MemoryRefundRepository,
   MemorySubscriptionRepository,
   MemoryUserRepository,
+  MemoryMerchantRepository,
   MemoryDepositAddressRepository,
   MemorySweepJobRepository,
 } from './storage/memoryStore';
@@ -21,6 +22,7 @@ import {
   RefundRepository,
   SubscriptionRepository,
   UserRepository,
+  MerchantRepository,
   DepositAddressRepository,
   SweepJobRepository,
 } from './storage/repository';
@@ -39,6 +41,7 @@ import { ExpiryService } from './services/expiryService';
 import { ExpiryWatcher } from './services/expiryWatcher';
 import { UsdtWatcher } from './services/usdtWatcher';
 import { UserService } from './services/userService';
+import { MerchantService } from './services/merchantService';
 import { ReconciliationService } from './services/reconciliationService';
 import { AuditLog, InMemoryAuditLog } from './audit/auditLog';
 import { WebhookDispatcher, MemoryWebhookRepository, OutboundEmitter } from './webhooks/outbound';
@@ -68,6 +71,7 @@ export interface ContainerOverrides {
   subscriptions?: SubscriptionRepository;
   users?: UserRepository;
   processedEvents?: ProcessedEventStore;
+  merchants?: MerchantRepository;
   locker?: Locker;
   plans?: PlanCatalog;
   notifier?: Notifier;
@@ -100,6 +104,7 @@ export interface Container {
   expiry: ExpiryService;
   expiryWatcher: ExpiryWatcher;
   users: UserService;
+  merchants: MerchantService;
   reconciliation: ReconciliationService;
   audit: AuditLog;
   pricing: PricingService;
@@ -153,6 +158,8 @@ export function buildContainer(config: AppConfig, overrides: ContainerOverrides 
   }
 
   const users = new UserService(usersRepo, now, audit);
+  const merchantsRepo = overrides.merchants ?? new MemoryMerchantRepository();
+  const merchants = new MerchantService(merchantsRepo, now, audit);
   const subscriptions = new SubscriptionService(subscriptionsRepo, plans, now);
 
   const providers = overrides.providers ?? new Map<PaymentMethod, PaymentProvider>();
@@ -368,7 +375,7 @@ export function buildContainer(config: AppConfig, overrides: ContainerOverrides 
   }
 
   return {
-    config, orders, payments, refunds, reports, expiry, expiryWatcher, users,
+    config, orders, payments, refunds, reports, expiry, expiryWatcher, users, merchants,
     reconciliation, audit, pricing, readiness, alertSink, fxProvider, processedEvents, plans,
     metrics, routerMetrics, rateLimit, security, usdtWatcher, sweepService, sweepWatcher,
     sweepJobs: sweepJobsRepo, sweepAlertWatcher, webhooks, webhookWatcher, enabledMethods,

@@ -7,6 +7,7 @@ import { createPgClient, runMigrations, PgClientHandle } from './storage/sql/pgC
 import { createRedisClient, RedisHandle } from './storage/redisClient';
 import { SqlOrderRepository, SqlRefundRepository, SqlSubscriptionRepository, SqlProcessedEventStore } from './storage/sql/sqlStore';
 import { SqlUserRepository } from './storage/sql/sqlUserStore';
+import { SqlMerchantRepository } from './storage/sql/sqlMerchantStore';
 import { SqlDepositAddressRepository, SqlSweepJobRepository } from './storage/sql/sqlDepositStore';
 import { SqlAuditLog } from './storage/sql/sqlAuditLog';
 import { RedisRateLimiter } from './api/redisRateLimiter';
@@ -35,6 +36,7 @@ async function buildOverrides(config: AppConfig): Promise<{
     overrides.subscriptions = new SqlSubscriptionRepository(pg.client);
     overrides.processedEvents = new SqlProcessedEventStore(pg.client);
     overrides.users = new SqlUserRepository(pg.client);
+    overrides.merchants = new SqlMerchantRepository(pg.client);
     overrides.audit = new SqlAuditLog(pg.client);
     overrides.depositAddresses = new SqlDepositAddressRepository(pg.client);
     overrides.sweepJobs = new SqlSweepJobRepository(pg.client);
@@ -92,6 +94,8 @@ async function main(): Promise<void> {
   const config = loadConfig();
   const { overrides, closers } = await buildOverrides(config);
   const container = buildContainer(config, overrides);
+  // Provision the implicit default tenant so single-tenant deploys need no setup.
+  await container.merchants.ensureDefault();
 
   if (container.enabledMethods.length === 0) {
     logger.warn(

@@ -2,6 +2,7 @@ import { Order, Subscription } from '../domain/types';
 import { Refund } from '../domain/refund';
 import { User } from '../domain/user';
 import { DepositAddress, SweepJob, isSweepTerminal } from '../domain/deposit';
+import { Merchant, DEFAULT_MERCHANT_ID } from '../domain/merchant';
 import {
   OrderRepository,
   OrderQueryFilter,
@@ -10,12 +11,18 @@ import {
   RefundQueryFilter,
   SubscriptionRepository,
   UserRepository,
+  MerchantRepository,
   ProcessedEventStore,
   Locker,
   DepositAddressRepository,
   SweepJobRepository,
 } from './repository';
 import { OrderStatus } from '../domain/types';
+
+/** The tenant an order belongs to, treating legacy/undefined as the default. */
+function orderMerchant(o: Order): string {
+  return o.merchantId ?? DEFAULT_MERCHANT_ID;
+}
 
 /**
  * In-memory implementations of the storage interfaces. They are intentionally
@@ -73,6 +80,7 @@ export class MemoryOrderRepository implements OrderRepository {
   async query(filter: OrderQueryFilter, limit: number, offset: number): Promise<{ total: number; items: Order[] }> {
     const matched = [...this.byId.values()]
       .filter((o) => {
+        if (filter.merchantId && orderMerchant(o) !== filter.merchantId) return false;
         if (filter.status && o.status !== filter.status) return false;
         if (filter.method && o.method !== filter.method) return false;
         if (filter.from !== undefined && o.createdAt < filter.from) return false;
@@ -86,6 +94,7 @@ export class MemoryOrderRepository implements OrderRepository {
   async summarize(filter: OrderQueryFilter): Promise<OrderSummary> {
     const paidStatuses = new Set<OrderStatus>([OrderStatus.PAID, OrderStatus.FULFILLED, OrderStatus.REFUNDED]);
     const matched = [...this.byId.values()].filter((o) => {
+      if (filter.merchantId && orderMerchant(o) !== filter.merchantId) return false;
       if (filter.status && o.status !== filter.status) return false;
       if (filter.method && o.method !== filter.method) return false;
       if (filter.from !== undefined && o.createdAt < filter.from) return false;
@@ -150,6 +159,38 @@ export class MemoryUserRepository implements UserRepository {
     this.byId.set(user.id, clone(user));
     this.byApiKey.set(user.apiKey, user.id);
     return clone(user);
+  }
+}
+
+export class MemoryMerchantRepository implements MerchantRepository {
+  private byId = new Map<string, Merchant>();
+
+  async create(merchant: Merchant): Promise<Merchant> {
+    if (this.byId.has(merchant.id)) throw new Error(`duplicate merchant: ${merchant.id}`);
+    this.byId.set(merchant.id, clone(merchant));
+    return clone(merchant);
+  }
+
+  async findById(id: string): Promise<Merchant | undefined> {
+    const m = this.byId.get(id);
+    return m ? clone(m) : undefined;
+  }
+
+  async findByApiKey(apiKey: string): Promise<Merchant | undefined> {
+    for (const m of this.byId.values()) {
+      if (m.apiKey === apiKey || m.apiKeyPrevious === apiKey) return clone(m);
+    }
+    return undefined;
+  }
+
+  async update(merchant: Merchant): Promise<Merchant> {
+    if (!this.byId.has(merchant.id)) throw new Error(`unknown merchant: ${merchant.id}`);
+    this.byId.set(merchant.id, clone(merchant));
+    return clone(merchant);
+  }
+
+  async list(): Promise<Merchant[]> {
+    return [...this.byId.values()].map(clone);
   }
 }
 

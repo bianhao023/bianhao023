@@ -10,6 +10,8 @@ export interface ReportFilter {
   to?: number;
   method?: PaymentMethod;
   status?: OrderStatus;
+  /** Scope to a single tenant (multi-merchant isolation). */
+  merchantId?: string;
 }
 
 export interface Page {
@@ -117,7 +119,7 @@ export class ReportService {
   async listOrders(filter: ReportFilter, page: Page): Promise<{ total: number; items: Order[] }> {
     // Push filtering + pagination into the store (SQL WHERE + LIMIT/OFFSET).
     return this.orders.query(
-      { status: filter.status, method: filter.method, from: filter.from, to: filter.to },
+      { status: filter.status, method: filter.method, from: filter.from, to: filter.to, merchantId: filter.merchantId },
       page.limit,
       page.offset,
     );
