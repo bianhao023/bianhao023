@@ -5,7 +5,7 @@ A commercial-grade payment backend for a VPN service, supporting **WeChat Pay**,
 dependencies** (only Node.js ≥ 20 built-ins: `crypto`, `http`, `fetch`), which
 keeps it auditable, easy to deploy, and free of payment-SDK supply-chain risk.
 
-> Status: builds clean (`tsc`, strict mode) and passes **331 automated tests**
+> Status: builds clean (`tsc`, strict mode) and passes **340 automated tests**
 > covering signing, callbacks, the order state machine, idempotency & dedupe
 > retention, concurrency, amount validation, USDT reconciliation, refunds
 > (full/partial/manual and asynchronous PROCESSING→final settlement), subscription
@@ -88,6 +88,12 @@ All amounts are integer **minor units** to avoid floating-point errors:
   hot-wallet mnemonic (`USDT_HD_MNEMONIC`) — keep both in a secret manager.
   Gas always comes from these fixed fee wallets; deposit addresses are never
   pre-funded and the collection wallet only receives. See `docs/GO-LIVE.md`.
+- **Scan-to-pay QR**: WeChat Native (`code_url`) and Alipay precreate (`qr_code`)
+  already return scannable QR content; every order also exposes a server-rendered
+  QR image at `GET /api/orders/:id/qrcode.svg` (and `qrImagePath` in the order
+  body) — WeChat/Alipay show the QR to scan, USDT shows the deposit address as a
+  QR too. The QR encoder is dependency-free (ISO/IEC 18004, byte+numeric, EC-M);
+  its Reed–Solomon math is verified against the published QR reference values.
 - **Sweep observability & ops**: Prometheus gauges (`vpn_sweep_jobs{status}`,
   `vpn_sweep_pending`, `vpn_sweep_failed`, `vpn_sweep_amount_micro_total`,
   `vpn_fee_wallet_trx_sun`), automatic alerts on FAILED sweeps and a low fee
@@ -133,7 +139,8 @@ run with any subset of WeChat / Alipay / USDT configured.
 | `GET /api/users/me` | Current account (auth: `Authorization: Bearer <apiKey>`) |
 | `POST /api/users/me/rotate-key` | Rotate the API key (invalidates the old one) 🔑 |
 | `POST /api/orders` | Create an order. Body: `{ userId, planId, method }`; optional `Idempotency-Key` header |
-| `GET /api/orders/:id` | Order status + pay info |
+| `GET /api/orders/:id` | Order status + pay info (incl. `qrImagePath`) |
+| `GET /api/orders/:id/qrcode.svg` | Scannable QR image (SVG) for the pay target |
 | `POST /api/orders/:id/sync` | Force a status re-check (used while waiting on USDT) |
 | `POST /api/orders/:id/refund` | Refund an order (full or partial). Body: `{ amount?, reason?, outRefundNo? }` |
 | `GET /api/orders/:id/refunds` | List refunds issued against an order |

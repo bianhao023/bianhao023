@@ -321,6 +321,21 @@ export function buildOpenApiSpec(enabledMethods: string[]): Record<string, unkno
           },
         },
       },
+      '/api/orders/{id}/qrcode.svg': {
+        get: {
+          tags: ['Orders'],
+          summary: 'Scannable QR image (SVG) for the order pay target',
+          operationId: 'getOrderQrCode',
+          parameters: [
+            orderIdParam(),
+            { name: 'm', in: 'query', required: false, description: 'Module pixel size (6–20, default 6).', schema: { type: 'integer' } },
+          ],
+          responses: {
+            '200': { description: 'QR code as an SVG image.', content: { 'image/svg+xml': { schema: { type: 'string' } } } },
+            '404': errorResponse('Order not found or has no pay target.'),
+          },
+        },
+      },
       '/api/orders/{id}/sync': {
         post: {
           tags: ['Orders'],

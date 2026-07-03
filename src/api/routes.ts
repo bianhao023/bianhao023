@@ -20,6 +20,7 @@ import { formatReconciliationAlert, Alert } from '../alerting/alertFormatter';
 import { APP_VERSION, API_VERSION, SUPPORTED_API_VERSIONS } from '../version';
 import { buildOpenApiSpec } from './openapi';
 import { SWAGGER_UI_HTML } from './docsHtml';
+import { qrToSvg } from '../qr/qrSvg';
 import { toPublicUser } from '../domain/user';
 import { PlanCatalog } from '../services/plans';
 import { UsdtWatcher } from '../services/usdtWatcher';
@@ -74,6 +75,8 @@ function orderView(o: Order): Record<string, unknown> {
     expiresAt: o.expiresAt,
     paidAt: o.paidAt,
     payInfo: o.metadata['payInfo'] ? JSON.parse(o.metadata['payInfo']) : undefined,
+    // Server-rendered scannable QR for the pay target (all methods).
+    qrImagePath: o.metadata['payInfo'] ? `/api/orders/${o.id}/qrcode.svg` : undefined,
   };
 }
 
@@ -261,6 +264,23 @@ export function buildRouter(deps: ApiDeps): Router {
     const order = await deps.payments.getOrder(ctx.params['id']);
     if (!order) throw new NotFoundError(`order not found: ${ctx.params['id']}`);
     sendJson(res, 200, orderView(order));
+  });
+
+  // Scannable QR image for the order's pay target (WeChat code_url / Alipay
+  // qr_code / USDT deposit address). Rendered server-side as a self-contained
+  // SVG so any client can display it without a QR library.
+  r.get('/api/orders/:id/qrcode.svg', async (ctx, res) => {
+    const order = await deps.payments.getOrder(ctx.params['id']);
+    if (!order) throw new NotFoundError(`order not found: ${ctx.params['id']}`);
+    const payInfoRaw = order.metadata['payInfo'];
+    const payTarget = payInfoRaw ? (JSON.parse(payInfoRaw) as { payTarget?: string }).payTarget : undefined;
+    if (!payTarget) {
+      sendJson(res, 404, { error: 'NO_QR', message: 'order has no payment target to encode' });
+      return;
+    }
+    const moduleSize = intParam(ctx.query, 'm', 6, 20);
+    res.setHeader('Cache-Control', 'no-store');
+    sendRaw(res, 200, 'image/svg+xml; charset=utf-8', qrToSvg(payTarget, { moduleSize }));
   });
 
   // Manual/polling settlement (used by clients waiting on USDT confirmation).
